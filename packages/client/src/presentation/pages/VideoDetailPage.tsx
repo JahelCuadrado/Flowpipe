@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect, useCallback, useMemo } from "react";
+import { createPortal } from "react-dom";
 import { useSearchParams, useNavigate } from "react-router";
 import Hls from "hls.js";
 import { fetchStreamInfo, fetchCommentsInfo, fetchCommentsNextPage } from "@/infrastructure/api/ApiService";
@@ -361,6 +362,50 @@ function VideoPlayer({ info }: { readonly info: StreamInfo }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [info.url]);
 
+  // ── Media Session API for lock screen / notification controls ──
+  useEffect(() => {
+    if (!("mediaSession" in navigator)) return;
+
+    navigator.mediaSession.metadata = new MediaMetadata({
+      title: info.name,
+      artist: info.uploaderName ?? "Unknown",
+      artwork: info.thumbnails.map((t) => ({
+        src: t.url,
+        sizes: `${t.width}x${t.height}`,
+        type: "image/jpeg",
+      })),
+    });
+
+    const video = videoRef.current;
+    if (!video) return;
+
+    navigator.mediaSession.setActionHandler("play", () => {
+      video.play().catch(() => {});
+    });
+    navigator.mediaSession.setActionHandler("pause", () => {
+      video.pause();
+    });
+    navigator.mediaSession.setActionHandler("seekbackward", () => {
+      video.currentTime = Math.max(0, video.currentTime - 10);
+    });
+    navigator.mediaSession.setActionHandler("seekforward", () => {
+      video.currentTime = Math.min(video.duration, video.currentTime + 10);
+    });
+    navigator.mediaSession.setActionHandler("seekto", (details) => {
+      if (details.seekTime !== undefined) {
+        video.currentTime = details.seekTime;
+      }
+    });
+
+    return () => {
+      navigator.mediaSession.setActionHandler("play", null);
+      navigator.mediaSession.setActionHandler("pause", null);
+      navigator.mediaSession.setActionHandler("seekbackward", null);
+      navigator.mediaSession.setActionHandler("seekforward", null);
+      navigator.mediaSession.setActionHandler("seekto", null);
+    };
+  }, [info.name, info.uploaderName, info.thumbnails]);
+
   const handleTimeUpdate = useCallback(() => {
     if (videoRef.current) {
       playerStore.setPosition(Math.floor(videoRef.current.currentTime));
@@ -713,22 +758,28 @@ function CommentsSheetContent({ url, serviceId }: { readonly url: string; readon
   const [loadingMore, setLoadingMore] = useState(false);
   const [commentsCount, setCommentsCount] = useState<number | null>(null);
   const [disabled, setDisabled] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    let cancelled = false;
+  const loadComments = useCallback(() => {
     setInitialLoading(true);
+    setError(null);
     fetchCommentsInfo(serviceId, url)
       .then((data) => {
-        if (cancelled) return;
         if (data.isCommentsDisabled) { setDisabled(true); setInitialLoading(false); return; }
         setComments(data.items);
         setNextPage(data.nextPage);
         setCommentsCount(data.commentsCount);
         setInitialLoading(false);
       })
-      .catch(() => { if (!cancelled) setInitialLoading(false); });
-    return () => { cancelled = true; };
+      .catch((err: unknown) => {
+        setError(err instanceof Error ? err.message : "Error al cargar comentarios");
+        setInitialLoading(false);
+      });
   }, [url, serviceId]);
+
+  useEffect(() => {
+    loadComments();
+  }, [loadComments]);
 
   const loadMore = useCallback(async () => {
     if (!nextPage || loadingMore) return;
@@ -751,6 +802,21 @@ function CommentsSheetContent({ url, serviceId }: { readonly url: string; readon
 
   if (disabled) {
     return <p className="px-4 py-8 text-center text-sm text-[#aaa]">Comentarios desactivados</p>;
+  }
+
+  if (error) {
+    return (
+      <div className="flex flex-col items-center gap-3 px-4 py-8">
+        <p className="text-sm text-[#ff4444]">{error}</p>
+        <button
+          type="button"
+          onClick={loadComments}
+          className="rounded-full bg-[#272727] px-5 py-2 text-xs font-medium text-white active:bg-[#3a3a3a]"
+        >
+          Reintentar
+        </button>
+      </div>
+    );
   }
 
   if (comments.length === 0) {
@@ -942,6 +1008,7 @@ function CommentsPreviewCard({ url, serviceId, onOpenComments }: {
   const [topComment, setTopComment] = useState<CommentItem | null>(null);
   const [count, setCount] = useState<number | null>(null);
   const [disabled, setDisabled] = useState(false);
+  const [hasError, setHasError] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -952,7 +1019,7 @@ function CommentsPreviewCard({ url, serviceId, onOpenComments }: {
         setCount(data.commentsCount);
         if (data.items.length > 0) setTopComment(data.items[0]!);
       })
-      .catch(() => {});
+      .catch(() => { if (!cancelled) setHasError(true); });
     return () => { cancelled = true; };
   }, [url, serviceId]);
 
@@ -981,6 +1048,8 @@ function CommentsPreviewCard({ url, serviceId, onOpenComments }: {
           )}
           <p className="line-clamp-2 text-[13px] leading-relaxed text-[#ddd]">{topComment.commentText}</p>
         </div>
+      ) : hasError ? (
+        <p className="text-[13px] text-[#ff4444]">Error al cargar. Toca para reintentar.</p>
       ) : (
         <p className="text-[13px] text-[#717171]">Toca para ver los comentarios</p>
       )}
@@ -1088,6 +1157,7 @@ function AddToPlaylistButton({ info }: { readonly info: StreamInfo }) {
 
 function DownloadButton({ info }: { readonly info: StreamInfo }) {
   const [showMenu, setShowMenu] = useState(false);
+  const buttonRef = useRef<HTMLButtonElement>(null);
 
   const streams = [
     ...info.videoStreams.filter((s) => !s.isVideoOnly).map((s) => ({
@@ -1105,8 +1175,9 @@ function DownloadButton({ info }: { readonly info: StreamInfo }) {
   if (streams.length === 0) return null;
 
   return (
-    <div className="relative shrink-0">
+    <div className="shrink-0">
       <button
+        ref={buttonRef}
         type="button"
         onClick={() => setShowMenu(!showMenu)}
         className="flex items-center gap-1.5 rounded-full bg-[#272727] px-3.5 py-2 text-white active:bg-[#3a3a3a]"
@@ -1115,22 +1186,38 @@ function DownloadButton({ info }: { readonly info: StreamInfo }) {
         <span className="text-[12px] font-medium">Download</span>
       </button>
 
-      {showMenu && (
-        <div className="absolute left-0 top-full z-50 mt-1 min-w-48 overflow-hidden rounded-xl bg-[#1a1a1a]/95 shadow-2xl backdrop-blur-md">
-          {streams.map((stream) => (
-            <a
-              key={stream.url}
-              href={stream.url}
-              download={stream.filename}
-              target="_blank"
-              rel="noopener noreferrer"
-              onClick={() => setShowMenu(false)}
-              className="block px-4 py-2.5 text-[12px] text-[#f1f1f1] active:bg-white/10"
-            >
-              {stream.label}
-            </a>
-          ))}
-        </div>
+      {showMenu && createPortal(
+        <div
+          className="fixed inset-0 z-[9999] flex items-end justify-center bg-black/60"
+          onClick={() => setShowMenu(false)}
+        >
+          <div
+            className="w-full max-w-lg rounded-t-2xl bg-[#212121] pb-[env(safe-area-inset-bottom,0px)]"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex justify-center py-3">
+              <div className="h-1 w-10 rounded-full bg-[#555]" />
+            </div>
+            <p className="px-5 pb-3 text-[15px] font-semibold text-white">Descargar</p>
+            <div className="max-h-[60vh] overflow-y-auto pb-4">
+              {streams.map((stream) => (
+                <a
+                  key={stream.url}
+                  href={stream.url}
+                  download={stream.filename}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  onClick={() => setShowMenu(false)}
+                  className="flex w-full items-center gap-3 px-5 py-3 text-left text-[14px] text-white active:bg-white/5"
+                >
+                  <DownloadIcon width={18} height={18} />
+                  <span>{stream.label}</span>
+                </a>
+              ))}
+            </div>
+          </div>
+        </div>,
+        document.body
       )}
     </div>
   );
