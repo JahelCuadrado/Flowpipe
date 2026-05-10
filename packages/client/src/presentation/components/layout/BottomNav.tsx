@@ -17,21 +17,38 @@ const NAV_ITEMS: readonly NavItem[] = [
   { path: "/you", label: "Tú", icon: (f) => <LibraryIcon filled={f} /> },
 ];
 
+const NAV_ITEMS_BY_KEY = new Map(NAV_ITEMS.filter((i) => i.settingsKey).map((i) => [i.settingsKey, i]));
+
 /**
  * YouTube-style bottom navigation bar.
- * Tabs can be toggled on/off from Settings (except "Tú").
+ * Tabs can be toggled on/off and reordered from Settings (except "Tú").
  */
 export function BottomNav() {
   const visibleTabs = useSettingsStore((s) => s.visibleTabs);
+  const tabOrder = useSettingsStore((s) => s.tabOrder);
 
-  const items = NAV_ITEMS.filter(
-    (item) => !item.settingsKey || visibleTabs[item.settingsKey]
-  );
+  // Build ordered items: reorderable tabs in user order, then fixed "Tú" at end
+  const orderedItems: NavItem[] = [];
+  for (const key of tabOrder) {
+    if (visibleTabs[key]) {
+      const item = NAV_ITEMS_BY_KEY.get(key);
+      if (item) orderedItems.push(item);
+    }
+  }
+  // Add any visible tabs not in tabOrder (migration safety)
+  for (const item of NAV_ITEMS) {
+    if (item.settingsKey && visibleTabs[item.settingsKey] && !orderedItems.includes(item)) {
+      orderedItems.push(item);
+    }
+  }
+  // Fixed "Tú" tab always at end
+  const fixedTab = NAV_ITEMS.find((i) => !i.settingsKey);
+  if (fixedTab) orderedItems.push(fixedTab);
 
   return (
     <nav className="fixed bottom-0 left-0 right-0 z-50 border-t border-[#272727] bg-[#0f0f0f] pb-[env(safe-area-inset-bottom,0px)]">
       <div className="mx-auto flex max-w-lg items-center justify-around">
-        {items.map((item) => (
+        {orderedItems.map((item) => (
           <NavLink
             key={item.path}
             to={item.path}

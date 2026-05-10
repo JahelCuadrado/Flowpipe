@@ -7,6 +7,8 @@ interface VisibleTabs {
   readonly subscriptions: boolean;
 }
 
+type TabKey = keyof VisibleTabs;
+
 interface SettingsState {
   readonly theme: "dark" | "light" | "system";
   readonly defaultServiceId: number;
@@ -20,6 +22,7 @@ interface SettingsState {
   readonly apiBaseUrl: string;
   readonly contentCountry: string;
   readonly visibleTabs: VisibleTabs;
+  readonly tabOrder: readonly TabKey[];
 }
 
 interface SettingsActions {
@@ -34,7 +37,8 @@ interface SettingsActions {
   setShowWatchHistory(show: boolean): void;
   setApiBaseUrl(url: string): void;
   setContentCountry(country: string): void;
-  setVisibleTab(tab: keyof VisibleTabs, visible: boolean): void;
+  setVisibleTab(tab: TabKey, visible: boolean): void;
+  setTabOrder(order: readonly TabKey[]): void;
 }
 
 /**
@@ -56,6 +60,7 @@ export const useSettingsStore = create<SettingsState & SettingsActions>()(
       apiBaseUrl: "/api/v1",
       contentCountry: "ES",
       visibleTabs: { home: true, shorts: true, subscriptions: true },
+      tabOrder: ["home", "shorts", "subscriptions"] as TabKey[],
 
       // ─── Actions ─────────────────────────────────────────────────
       setTheme: (theme) => set({ theme }),
@@ -72,6 +77,7 @@ export const useSettingsStore = create<SettingsState & SettingsActions>()(
       setVisibleTab: (tab, visible) => set((state) => ({
         visibleTabs: { ...state.visibleTabs, [tab]: visible },
       })),
+      setTabOrder: (order) => set({ tabOrder: order }),
     }),
     {
       name: "newpipe-settings",

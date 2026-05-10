@@ -1,4 +1,4 @@
-import { useState, useRef } from "react";
+import { useState, useRef, useCallback } from "react";
 import { createPortal } from "react-dom";
 import { useSettingsStore } from "@/application/stores/settingsStore";
 import { exportSubscriptions, importSubscriptions } from "@/application/services/PersistenceService";
@@ -159,24 +159,7 @@ export default function SettingsPage() {
 
         {/* Tabs */}
         <SettingsSection title="Pestañas de navegación" icon="📑">
-          <ToggleRow
-            label="Inicio"
-            description="Mostrar la pestaña de inicio"
-            value={settings.visibleTabs.home}
-            onChange={(v) => settings.setVisibleTab("home", v)}
-          />
-          <ToggleRow
-            label="Shorts"
-            description="Mostrar la pestaña de Shorts"
-            value={settings.visibleTabs.shorts}
-            onChange={(v) => settings.setVisibleTab("shorts", v)}
-          />
-          <ToggleRow
-            label="Suscripciones"
-            description="Mostrar la pestaña de suscripciones"
-            value={settings.visibleTabs.subscriptions}
-            onChange={(v) => settings.setVisibleTab("subscriptions", v)}
-          />
+          <TabOrderManager />
         </SettingsSection>
 
         {/* Privacy */}
@@ -238,6 +221,108 @@ export default function SettingsPage() {
         {/* Version */}
         <p className="mt-2 text-center text-[11px] text-[#555]">Flowpipe v1.0.0</p>
       </div>
+    </div>
+  );
+}
+
+// ─── Tab Order Manager (Drag & Drop) ─────────────────────────────────────────
+
+const TAB_LABELS: Record<string, string> = {
+  home: "Inicio",
+  shorts: "Shorts",
+  subscriptions: "Suscripciones",
+};
+
+function TabOrderManager() {
+  const visibleTabs = useSettingsStore((s) => s.visibleTabs);
+  const tabOrder = useSettingsStore((s) => s.tabOrder);
+  const setVisibleTab = useSettingsStore((s) => s.setVisibleTab);
+  const setTabOrder = useSettingsStore((s) => s.setTabOrder);
+
+  const [dragIndex, setDragIndex] = useState<number | null>(null);
+  const [overIndex, setOverIndex] = useState<number | null>(null);
+  const touchStartY = useRef<number>(0);
+  const itemRefs = useRef<(HTMLDivElement | null)[]>([]);
+
+  const handleTouchStart = useCallback((index: number, event: React.TouchEvent) => {
+    touchStartY.current = event.touches[0]!.clientY;
+    setDragIndex(index);
+  }, []);
+
+  const handleTouchMove = useCallback((event: React.TouchEvent) => {
+    if (dragIndex === null) return;
+    const touchY = event.touches[0]!.clientY;
+    // Find which item the finger is over
+    for (let i = 0; i < itemRefs.current.length; i++) {
+      const el = itemRefs.current[i];
+      if (!el) continue;
+      const rect = el.getBoundingClientRect();
+      if (touchY >= rect.top && touchY <= rect.bottom) {
+        setOverIndex(i);
+        return;
+      }
+    }
+  }, [dragIndex]);
+
+  const handleTouchEnd = useCallback(() => {
+    if (dragIndex !== null && overIndex !== null && dragIndex !== overIndex) {
+      const newOrder = [...tabOrder];
+      const [moved] = newOrder.splice(dragIndex, 1);
+      if (moved) {
+        newOrder.splice(overIndex, 0, moved);
+        setTabOrder(newOrder);
+      }
+    }
+    setDragIndex(null);
+    setOverIndex(null);
+  }, [dragIndex, overIndex, tabOrder, setTabOrder]);
+
+  return (
+    <div
+      className="flex flex-col"
+      onTouchMove={handleTouchMove}
+      onTouchEnd={handleTouchEnd}
+    >
+      <p className="px-4 pt-3 pb-1 text-[11px] text-[#717171]">Mantén pulsado y arrastra para reordenar</p>
+      {tabOrder.map((key, index) => (
+        <div
+          key={key}
+          ref={(el) => { itemRefs.current[index] = el; }}
+          className={`flex items-center justify-between px-4 py-3.5 transition-colors ${
+            dragIndex === index ? "bg-[#2a2a2a]" : ""
+          } ${overIndex === index && dragIndex !== index ? "border-t-2 border-[#3ea6ff]" : "border-t-2 border-transparent"}`}
+        >
+          {/* Drag handle */}
+          <div
+            className="mr-3 flex cursor-grab touch-none items-center text-[#717171] active:text-white"
+            onTouchStart={(e) => handleTouchStart(index, e)}
+          >
+            <svg viewBox="0 0 24 24" width={20} height={20} fill="currentColor">
+              <path d="M3 15h18v-2H3v2zm0 4h18v-2H3v2zm0-8h18V9H3v2zm0-6v2h18V5H3z" />
+            </svg>
+          </div>
+
+          {/* Label */}
+          <div className="min-w-0 flex-1">
+            <p className="text-[14px] text-white">{TAB_LABELS[key] ?? key}</p>
+          </div>
+
+          {/* Toggle */}
+          <button
+            type="button"
+            onClick={() => setVisibleTab(key as "home" | "shorts" | "subscriptions", !visibleTabs[key as keyof typeof visibleTabs])}
+            className="ml-3"
+          >
+            <div className={`h-[26px] w-[46px] shrink-0 rounded-full transition-colors ${
+              visibleTabs[key as keyof typeof visibleTabs] ? "bg-[#3ea6ff]" : "bg-[#555]"
+            }`}>
+              <div className={`mt-[3px] h-5 w-5 rounded-full bg-white shadow-sm transition-transform ${
+                visibleTabs[key as keyof typeof visibleTabs] ? "translate-x-[23px]" : "translate-x-[3px]"
+              }`} />
+            </div>
+          </button>
+        </div>
+      ))}
     </div>
   );
 }
