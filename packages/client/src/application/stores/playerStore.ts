@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import { BackgroundPlayback } from "@/infrastructure/native/BackgroundPlayback";
 
 type PlayerStatus = "idle" | "loading" | "playing" | "paused" | "buffering" | "error";
 
@@ -47,7 +48,8 @@ export const usePlayerStore = create<PlayerState & PlayerActions>()((set) => ({
   isMinimized: true,
 
   // ─── Actions ─────────────────────────────────────────────────────
-  play: (url, title, uploader, thumbnail) =>
+  play: (url, title, uploader, thumbnail) => {
+    BackgroundPlayback.start(title, uploader).catch(() => {});
     set({
       status: "loading",
       currentUrl: url,
@@ -56,11 +58,13 @@ export const usePlayerStore = create<PlayerState & PlayerActions>()((set) => ({
       currentThumbnail: thumbnail,
       position: 0,
       isMinimized: false,
-    }),
+    });
+  },
 
   pause: () => set({ status: "paused" }),
   resume: () => set({ status: "playing" }),
-  stop: () =>
+  stop: () => {
+    BackgroundPlayback.stop().catch(() => {});
     set({
       status: "idle",
       currentUrl: null,
@@ -69,7 +73,8 @@ export const usePlayerStore = create<PlayerState & PlayerActions>()((set) => ({
       currentThumbnail: null,
       duration: 0,
       position: 0,
-    }),
+    });
+  },
 
   seek: (position) => set({ position }),
   setVolume: (volume) => set({ volume }),

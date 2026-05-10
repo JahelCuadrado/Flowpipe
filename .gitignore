@@ -29,6 +29,8 @@ coverage/
 
 # Capacitor
 android/
+!packages/client/android/app/src/main/java/
+!packages/client/android/app/src/main/AndroidManifest.xml
 ios/
 
 # Builds
