@@ -1,0 +1,23 @@
+{
+  "name": "newpipe-web",
+  "version": "1.0.0",
+  "private": true,
+  "description": "NewPipe Web - A privacy-first YouTube frontend",
+  "license": "GPL-3.0-or-later",
+  "packageManager": "pnpm@10.11.0",
+  "scripts": {
+    "dev": "turbo dev --filter=@newpipe/client",
+    "build": "turbo build",
+    "test": "turbo test",
+    "lint": "turbo lint",
+    "clean": "turbo clean",
+    "dev:client": "turbo dev --filter=@newpipe/client",
+    "build:client": "turbo build --filter=@newpipe/client",
+    "typecheck": "turbo typecheck",
+    "dev:proxy": "node scripts/cors-proxy.mjs"
+  },
+  "devDependencies": {
+    "turbo": "^2.5.0",
+    "typescript": "^5.8.3"
+  }
+}
