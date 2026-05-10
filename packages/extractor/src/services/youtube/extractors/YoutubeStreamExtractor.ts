@@ -359,13 +359,75 @@ function toImageInfoList(
 }
 
 function extractRelatedItems(nextResponse: Record<string, unknown>): StreamInfoItem[] {
-  const results = (
+  // Try desktop layout: twoColumnWatchNextResults → secondaryResults
+  const twoColumn = (
     (nextResponse["contents"] as Record<string, unknown>)
       ?.["twoColumnWatchNextResults"] as Record<string, unknown>
-  )?.["secondaryResults"] as Record<string, unknown> | undefined;
+  );
 
+  const results = twoColumn?.["secondaryResults"] as Record<string, unknown> | undefined;
   const secondaryResults = results?.["secondaryResults"] as Record<string, unknown> | undefined;
-  const resultArray = secondaryResults?.["results"] as Array<Record<string, unknown>> | undefined;
+  let resultArray = secondaryResults?.["results"] as Array<Record<string, unknown>> | undefined;
+
+  // Fallback: try singleColumnWatchNextResults for mobile layout
+  if (!resultArray) {
+    const singleColumn = (
+      (nextResponse["contents"] as Record<string, unknown>)
+        ?.["singleColumnWatchNextResults"] as Record<string, unknown>
+    );
+    const autoplay = singleColumn?.["autoplay"] as Record<string, unknown> | undefined;
+    const autoplayRenderer = autoplay?.["autoplay"] as Record<string, unknown> | undefined;
+    const sets = autoplayRenderer?.["sets"] as Array<Record<string, unknown>> | undefined;
+    if (sets?.[0]) {
+      const autoplayVideo = sets[0]["autoplayVideo"] as Record<string, unknown> | undefined;
+      if (autoplayVideo) {
+        // autoplay only gives one video, not a list — skip
+      }
+    }
+
+    // Try results from the primary tab in single column
+    const tabs = singleColumn?.["results"] as Record<string, unknown> | undefined;
+    const tabResults = tabs?.["results"] as Record<string, unknown> | undefined;
+    const tabContents = tabResults?.["contents"] as Array<Record<string, unknown>> | undefined;
+    if (tabContents) {
+      for (const section of tabContents) {
+        const itemSection = section["itemSectionRenderer"] as Record<string, unknown> | undefined;
+        const sectionContents = itemSection?.["contents"] as Array<Record<string, unknown>> | undefined;
+        if (sectionContents) {
+          resultArray = sectionContents;
+          break;
+        }
+      }
+    }
+  }
+
+  // Fallback: try engagementPanels for related videos
+  if (!resultArray) {
+    const panels = nextResponse["engagementPanels"] as Array<Record<string, unknown>> | undefined;
+    if (panels) {
+      for (const panel of panels) {
+        const renderer = panel["engagementPanelSectionListRenderer"] as Record<string, unknown> | undefined;
+        const panelId = renderer?.["panelIdentifier"] as string | undefined;
+        if (panelId === "engagement-panel-structured-description" || panelId?.includes("related")) {
+          continue;
+        }
+        const content = renderer?.["content"] as Record<string, unknown> | undefined;
+        const sectionList = content?.["sectionListRenderer"] as Record<string, unknown> | undefined;
+        const sections = sectionList?.["contents"] as Array<Record<string, unknown>> | undefined;
+        if (sections) {
+          for (const section of sections) {
+            const itemSection = section["itemSectionRenderer"] as Record<string, unknown> | undefined;
+            const sectionContents = itemSection?.["contents"] as Array<Record<string, unknown>> | undefined;
+            if (sectionContents) {
+              resultArray = sectionContents;
+              break;
+            }
+          }
+        }
+        if (resultArray) break;
+      }
+    }
+  }
 
   if (!resultArray) {
     return [];
@@ -374,7 +436,11 @@ function extractRelatedItems(nextResponse: Record<string, unknown>): StreamInfoI
   const items: StreamInfoItem[] = [];
 
   for (const result of resultArray) {
-    const renderer = result["compactVideoRenderer"] as Record<string, unknown> | undefined;
+    // YouTube uses different renderer types depending on layout
+    const renderer = (result["compactVideoRenderer"]
+      ?? result["videoRenderer"]
+      ?? result["gridVideoRenderer"]
+      ?? result["videoWithContextRenderer"]) as Record<string, unknown> | undefined;
     if (!renderer) {
       continue;
     }
