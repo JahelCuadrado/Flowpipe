@@ -35,15 +35,39 @@ export default function SubscriptionsPage() {
     setLoadingFeed(true);
     try {
       const allItems: StreamInfoItem[] = [];
+      // Build a lookup map for subscription avatars by channel URL
+      const avatarByUrl = new Map<string, string>();
+      for (const sub of subs) {
+        if (sub.avatarUrl) avatarByUrl.set(sub.url, sub.avatarUrl);
+      }
       // Load in batches to avoid overwhelming the server
       for (let i = 0; i < subs.length; i += SUBS_PER_BATCH) {
         const batch = subs.slice(i, i + SUBS_PER_BATCH);
         const results = await Promise.allSettled(
           batch.map((sub) => fetchChannelTabInfo(sub.serviceId, sub.url, "Videos"))
         );
-        for (const result of results) {
+        for (let batchIdx = 0; batchIdx < results.length; batchIdx++) {
+          const result = results[batchIdx]!;
           if (result.status === "fulfilled" && result.value) {
-            allItems.push(...result.value.items.slice(0, VIDEOS_PER_CHANNEL));
+            const sub = batch[batchIdx]!;
+            const subAvatar = avatarByUrl.get(sub.url);
+            const enrichedItems = result.value.items.slice(0, VIDEOS_PER_CHANNEL).map((item) => {
+              const patched = { ...item };
+              // Inject subscription avatar when the extractor doesn't provide one
+              if (item.uploaderAvatars.length === 0 && subAvatar) {
+                (patched as Record<string, unknown>).uploaderAvatars = [{ url: subAvatar, width: 88, height: 88 }];
+              }
+              // Ensure uploaderUrl is set so channel filtering works reliably
+              if (!item.uploaderUrl) {
+                (patched as Record<string, unknown>).uploaderUrl = sub.url;
+              }
+              // Ensure uploaderName is set from the subscription
+              if (!item.uploaderName) {
+                (patched as Record<string, unknown>).uploaderName = sub.name;
+              }
+              return patched as StreamInfoItem;
+            });
+            allItems.push(...enrichedItems);
           }
         }
       }
@@ -76,7 +100,12 @@ export default function SubscriptionsPage() {
   }, [loadSubscriptions, loadFeed]);
 
   const filteredItems = selectedChannel
-    ? feedItems.filter((item) => item.uploaderUrl === selectedChannel || item.uploaderName === subscriptions.find((s) => s.url === selectedChannel)?.name)
+    ? feedItems.filter((item) => {
+        const sub = subscriptions.find((s) => s.url === selectedChannel);
+        // Match by exact URL, or by channel name when URLs use different formats
+        return item.uploaderUrl === selectedChannel
+          || (sub && item.uploaderName === sub.name);
+      })
     : feedItems;
 
   // When a channel is selected but no feed items match, load directly from channel
