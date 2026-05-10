@@ -1,0 +1,20 @@
+import type { CapacitorConfig } from "@capacitor/cli";
+
+const config: CapacitorConfig = {
+  appId: "org.newpipe.web",
+  appName: "NewPipe",
+  webDir: "dist",
+  server: {
+    androidScheme: "https",
+  },
+  plugins: {
+    SplashScreen: {
+      launchShowDuration: 0,
+    },
+    CapacitorHttp: {
+      enabled: true,
+    },
+  },
+};
+
+export default config;
