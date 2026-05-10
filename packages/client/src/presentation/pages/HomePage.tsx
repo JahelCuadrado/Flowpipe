@@ -107,7 +107,7 @@ export default function HomePage() {
         {/* Flowpipe Logo */}
         <div className="flex items-center gap-1.5">
           <svg viewBox="0 0 24 24" width={24} height={24}>
-            <path d="M4 2 L20 12 L4 22 Z" fill="#ff0000" stroke="#ff0000" strokeWidth="2" strokeLinejoin="round" strokeLinecap="round" />
+            <path d="M6 4 L19 12 L6 20 Z" fill="#ff0000" stroke="#ff0000" strokeWidth="3" strokeLinejoin="round" strokeLinecap="round" />
           </svg>
           <span className="text-[18px] font-bold tracking-tight text-white">Flowpipe</span>
         </div>
