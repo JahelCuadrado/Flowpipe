@@ -42,24 +42,17 @@ body {
   background-color: var(--color-background);
   color: var(--color-text-primary);
   overflow-x: hidden;
+  scrollbar-width: none;
 }
 
 /* ─── Scrollbar styling ───────────────────────────────────────────────────── */
-::-webkit-scrollbar {
-  width: 6px;
+/* Hide all scrollbars globally to prevent layout shift on scroll */
+*::-webkit-scrollbar {
+  display: none;
 }
 
-::-webkit-scrollbar-track {
-  background: transparent;
-}
-
-::-webkit-scrollbar-thumb {
-  background: var(--color-border);
-  border-radius: var(--radius-full);
-}
-
-::-webkit-scrollbar-thumb:hover {
-  background: var(--color-text-tertiary);
+* {
+  scrollbar-width: none;
 }
 
 

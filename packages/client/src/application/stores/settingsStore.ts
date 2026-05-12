@@ -21,6 +21,7 @@ interface SettingsState {
   readonly showWatchHistory: boolean;
   readonly apiBaseUrl: string;
   readonly contentCountry: string;
+  readonly disableAiDubbing: boolean;
   readonly visibleTabs: VisibleTabs;
   readonly tabOrder: readonly TabKey[];
 }
@@ -37,6 +38,7 @@ interface SettingsActions {
   setShowWatchHistory(show: boolean): void;
   setApiBaseUrl(url: string): void;
   setContentCountry(country: string): void;
+  setDisableAiDubbing(disable: boolean): void;
   setVisibleTab(tab: TabKey, visible: boolean): void;
   setTabOrder(order: readonly TabKey[]): void;
 }
@@ -59,6 +61,7 @@ export const useSettingsStore = create<SettingsState & SettingsActions>()(
       showWatchHistory: true,
       apiBaseUrl: "/api/v1",
       contentCountry: "ES",
+      disableAiDubbing: false,
       visibleTabs: { home: true, shorts: true, subscriptions: true },
       tabOrder: ["home", "shorts", "subscriptions"] as TabKey[],
 
@@ -74,6 +77,7 @@ export const useSettingsStore = create<SettingsState & SettingsActions>()(
       setShowWatchHistory: (showWatchHistory) => set({ showWatchHistory }),
       setApiBaseUrl: (apiBaseUrl) => set({ apiBaseUrl }),
       setContentCountry: (contentCountry) => set({ contentCountry }),
+      setDisableAiDubbing: (disableAiDubbing) => set({ disableAiDubbing }),
       setVisibleTab: (tab, visible) => set((state) => ({
         visibleTabs: { ...state.visibleTabs, [tab]: visible },
       })),

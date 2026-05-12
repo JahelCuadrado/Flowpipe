@@ -185,10 +185,41 @@ function findCommentsContinuation(data: Record<string, unknown>): string | null 
 
 // ─── Response parsers ───────────────────────────────────────────────────────
 
+/**
+ * Index of entity mutations keyed by entityKey.
+ * Used by the new commentViewModel format where comment data is stored
+ * in frameworkUpdates.entityBatchUpdate.mutations rather than inline.
+ */
+type MutationIndex = Map<string, Record<string, unknown>>;
+
+function buildMutationIndex(data: Record<string, unknown>): MutationIndex {
+  const index: MutationIndex = new Map();
+  const frameworkUpdates = data["frameworkUpdates"] as Record<string, unknown> | undefined;
+  const entityBatchUpdate = frameworkUpdates?.["entityBatchUpdate"] as Record<string, unknown> | undefined;
+  const mutations = entityBatchUpdate?.["mutations"] as Array<Record<string, unknown>> | undefined;
+  if (!mutations) return index;
+
+  for (const mutation of mutations) {
+    const key = mutation["entityKey"] as string | undefined;
+    const payload = mutation["payload"] as Record<string, unknown> | undefined;
+    if (key && payload) {
+      // Payload contains a single typed key (e.g. commentEntityPayload)
+      // Flatten to the inner object for easier access
+      const values = Object.values(payload);
+      if (values.length > 0 && typeof values[0] === "object" && values[0] !== null) {
+        index.set(key, values[0] as Record<string, unknown>);
+      }
+    }
+  }
+  return index;
+}
+
 function parseCommentsResponse(data: Record<string, unknown>, url: string): CommentInfo {
   const items: CommentItem[] = [];
   let nextPage: Page | null = null;
   let commentsCount: number | null = null;
+
+  const mutationIndex = buildMutationIndex(data);
 
   // Try onResponseReceivedEndpoints (initial load)
   const endpoints = data["onResponseReceivedEndpoints"] as Array<Record<string, unknown>> | undefined;
@@ -211,7 +242,7 @@ function parseCommentsResponse(data: Record<string, unknown>, url: string): Comm
       for (const item of continuationItems) {
         if (item["commentThreadRenderer"]) {
           const thread = item["commentThreadRenderer"] as Record<string, unknown>;
-          const comment = parseCommentThread(thread, url);
+          const comment = parseCommentThread(thread, url, mutationIndex);
           if (comment) {
             items.push(comment);
           }
@@ -241,7 +272,20 @@ function parseCommentsResponse(data: Record<string, unknown>, url: string): Comm
   };
 }
 
-function parseCommentThread(thread: Record<string, unknown>, videoUrl: string): CommentItem | null {
+function parseCommentThread(
+  thread: Record<string, unknown>,
+  videoUrl: string,
+  mutationIndex: MutationIndex
+): CommentItem | null {
+  // ── New format: commentViewModel with mutations ──
+  const viewModelWrapper = thread["commentViewModel"] as Record<string, unknown> | undefined;
+  const viewModel = viewModelWrapper?.["commentViewModel"] as Record<string, unknown> | undefined;
+
+  if (viewModel) {
+    return parseCommentFromViewModel(viewModel, thread, videoUrl, mutationIndex);
+  }
+
+  // ── Legacy format: comment.commentRenderer ──
   const commentObj = thread["comment"] as Record<string, unknown> | undefined;
   const renderer = commentObj?.["commentRenderer"] as Record<string, unknown> | undefined;
 
@@ -249,6 +293,117 @@ function parseCommentThread(thread: Record<string, unknown>, videoUrl: string): 
     return null;
   }
 
+  return parseCommentFromRenderer(renderer, thread, videoUrl);
+}
+
+/**
+ * Parses a comment from the new commentViewModel format.
+ * Comment data is stored in frameworkUpdates mutations, referenced by keys.
+ */
+function parseCommentFromViewModel(
+  viewModel: Record<string, unknown>,
+  thread: Record<string, unknown>,
+  videoUrl: string,
+  mutationIndex: MutationIndex
+): CommentItem | null {
+  const commentKey = viewModel["commentKey"] as string | undefined;
+  const toolbarStateKey = viewModel["toolbarStateKey"] as string | undefined;
+  const commentId = (viewModel["commentId"] as string) ?? "";
+
+  if (!commentKey) return null;
+
+  const entity = mutationIndex.get(commentKey);
+  if (!entity) return null;
+
+  // Properties hold content, publishedTime, etc.
+  const properties = entity["properties"] as Record<string, unknown> | undefined;
+  const contentObj = properties?.["content"] as Record<string, unknown> | undefined;
+  const commentText = (contentObj?.["content"] as string) ?? "";
+  const textualUploadDate = (properties?.["publishedTime"] as string) ?? null;
+
+  // Author info
+  const author = entity["author"] as Record<string, unknown> | undefined;
+  const uploaderName = (author?.["displayName"] as string) ?? "";
+  const channelId = (author?.["channelId"] as string) ?? null;
+  const uploaderUrl = channelId ? `https://www.youtube.com/channel/${channelId}` : null;
+  const avatarUrl = (author?.["avatarThumbnailUrl"] as string) ?? null;
+  const uploaderVerified = (author?.["isVerified"] as boolean) ?? false;
+  const isCreator = (author?.["isCreator"] as boolean) ?? false;
+
+  const uploaderAvatars: ImageInfo[] = avatarUrl
+    ? [{ url: avatarUrl, width: 88, height: 88, estimatedResolutionLevel: ImageResolutionLevel.Low }]
+    : [];
+
+  // Toolbar holds like count, reply count
+  const toolbar = entity["toolbar"] as Record<string, unknown> | undefined;
+  const likeCountStr = (toolbar?.["likeCountNotliked"] as string) ?? null;
+  let likeCount: number | null = null;
+  if (likeCountStr) {
+    const num = likeCountStr.replace(/[^0-9]/g, "");
+    if (num) likeCount = parseInt(num, 10);
+  }
+
+  const replyCountStr = (toolbar?.["replyCount"] as string) ?? null;
+  let replyCount: number | null = null;
+  if (replyCountStr) {
+    const num = replyCountStr.replace(/[^0-9]/g, "");
+    if (num) replyCount = parseInt(num, 10);
+  }
+
+  // Heart state from toolbar state entity
+  let heartedByUploader = false;
+  if (toolbarStateKey) {
+    const toolbarState = mutationIndex.get(toolbarStateKey);
+    heartedByUploader = toolbarState?.["heartState"] === "TOOLBAR_HEART_STATE_HEARTED";
+  }
+
+  // Pinned
+  const pinnedText = viewModel["pinnedText"] as string | undefined;
+  const pinned = !!pinnedText;
+
+  // Replies continuation
+  let replies: Page | null = null;
+  const repliesRenderer = thread["replies"] as Record<string, unknown> | undefined;
+  const commentReplies = repliesRenderer?.["commentRepliesRenderer"] as Record<string, unknown> | undefined;
+  if (commentReplies) {
+    const replyContinuations = commentReplies["contents"] as Array<Record<string, unknown>> | undefined;
+    if (replyContinuations?.[0]?.["continuationItemRenderer"]) {
+      replies = extractCommentContinuation(
+        replyContinuations[0]["continuationItemRenderer"] as Record<string, unknown>
+      );
+    }
+  }
+
+  return {
+    serviceId: ServiceId.YouTube,
+    url: videoUrl,
+    name: uploaderName,
+    commentId,
+    commentText,
+    uploaderName,
+    uploaderUrl,
+    uploaderAvatars,
+    uploaderVerified,
+    textualUploadDate,
+    uploadDate: null,
+    likeCount,
+    heartedByUploader,
+    pinned,
+    replyCount,
+    replies,
+    creatorReply: isCreator,
+  };
+}
+
+/**
+ * Parses a comment from the legacy commentRenderer format.
+ * Kept for backward compatibility in case YouTube serves both formats.
+ */
+function parseCommentFromRenderer(
+  renderer: Record<string, unknown>,
+  thread: Record<string, unknown>,
+  videoUrl: string
+): CommentItem | null {
   const commentId = (renderer["commentId"] as string) ?? "";
   const contentText = renderer["contentText"] as Record<string, unknown> | undefined;
   const commentText = getTextFromObject(contentText) ?? "";
@@ -271,9 +426,7 @@ function parseCommentThread(thread: Record<string, unknown>, videoUrl: string): 
   let likeCount: number | null = null;
   if (likeText) {
     const num = likeText.replace(/[^0-9]/g, "");
-    if (num) {
-      likeCount = parseInt(num, 10);
-    }
+    if (num) likeCount = parseInt(num, 10);
   }
 
   // Hearted
@@ -302,9 +455,7 @@ function parseCommentThread(thread: Record<string, unknown>, videoUrl: string): 
     const replyText = getTextFromObject(buttonRenderer?.["text"] as Record<string, unknown>);
     if (replyText) {
       const num = replyText.replace(/[^0-9]/g, "");
-      if (num) {
-        replyCount = parseInt(num, 10);
-      }
+      if (num) replyCount = parseInt(num, 10);
     }
 
     const replyContinuations = commentReplies["contents"] as Array<Record<string, unknown>> | undefined;

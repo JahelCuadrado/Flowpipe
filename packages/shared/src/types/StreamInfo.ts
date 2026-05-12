@@ -103,6 +103,7 @@ export interface AudioStream {
   readonly audioTrackId: string | null;
   readonly audioTrackName: string | null;
   readonly audioLocale: string | null;
+  readonly audioIsDefault: boolean;
   readonly quality: string | null;
 }
 

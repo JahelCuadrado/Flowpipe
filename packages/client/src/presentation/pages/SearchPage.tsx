@@ -45,6 +45,7 @@ export default function SearchPage() {
   const inputRef = useRef<HTMLInputElement>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout>>(null);
   const sentinelRef = useRef<HTMLDivElement>(null);
+  const skipUrlSyncRef = useRef(false);
 
   // Initial search
   const executeSearch = useCallback(async (q: string, filter: string) => {
@@ -159,11 +160,14 @@ export default function SearchPage() {
   }
 
   function handleClearInput() {
+    skipUrlSyncRef.current = true;
     setInputValue("");
     setQuery("");
+    setSearchParams({}, { replace: true });
     setSuggestions([]);
     setShowSuggestions(true);
     setItems([]);
+    setError(null);
     inputRef.current?.focus();
   }
 
@@ -173,8 +177,12 @@ export default function SearchPage() {
     setSearchHistoryItems(entries.map((e) => e.search));
   }, [showSearchHistory]);
 
-  // Sync from URL changes
+  // Sync from URL changes (external navigation only, e.g. browser back/forward)
   useEffect(() => {
+    if (skipUrlSyncRef.current) {
+      skipUrlSyncRef.current = false;
+      return;
+    }
     const q = searchParams.get("q") ?? "";
     if (q && q !== query) { setQuery(q); setInputValue(q); }
   }, [searchParams, query]);

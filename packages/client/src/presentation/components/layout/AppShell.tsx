@@ -59,8 +59,15 @@ export function AppShell({ children }: AppShellProps) {
         >
           <Suspense
             fallback={
-              <div className="flex min-h-dvh items-center justify-center">
-                <div className="h-8 w-8 animate-spin rounded-full border-2 border-[var(--color-border)] border-t-[var(--color-primary)]" />
+              <div className="flex flex-col bg-[#0f0f0f]">
+                <div
+                  className="relative aspect-video w-full bg-black"
+                  style={{ viewTransitionName: "hero-thumbnail" }}
+                >
+                  <div className="absolute inset-0 flex items-center justify-center">
+                    <div className="h-10 w-10 animate-spin rounded-full border-3 border-white/30 border-t-white" />
+                  </div>
+                </div>
               </div>
             }
           >

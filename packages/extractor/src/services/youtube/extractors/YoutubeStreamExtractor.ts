@@ -318,6 +318,7 @@ async function extractAudioStreams(
     const audioTrack = format["audioTrack"] as Record<string, unknown> | undefined;
     const audioTrackId = (audioTrack?.["id"] as string) ?? null;
     const audioTrackName = (audioTrack?.["displayName"] as string) ?? null;
+    const audioIsDefault = (audioTrack?.["audioIsDefault"] as boolean) ?? false;
 
     // Extract locale from audioTrackId (format: "en.1")
     const audioLocale = audioTrackId?.split(".")[0] ?? null;
@@ -331,6 +332,7 @@ async function extractAudioStreams(
       audioTrackId,
       audioTrackName,
       audioLocale,
+      audioIsDefault,
       quality,
     });
   }

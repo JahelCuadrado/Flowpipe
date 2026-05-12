@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { useNavigate } from "react-router";
 import { database } from "@/infrastructure/database/AppDatabase";
-import { fetchChannelTabInfo } from "@/infrastructure/api/ApiService";
+import { fetchChannelTabInfo, fetchChannelInfo } from "@/infrastructure/api/ApiService";
 import { PullToRefresh } from "@/presentation/components/ui/PullToRefresh";
 import { VideoCardGrid } from "@/presentation/components/ui/VideoCard";
 import { SearchIcon } from "@/presentation/components/ui/Icons";
@@ -10,6 +10,34 @@ import type { StreamInfoItem } from "@newpipe/shared";
 
 const SUBS_PER_BATCH = 6;
 const VIDEOS_PER_CHANNEL = 8;
+/** Maximum batches to load on initial feed. Rest loads on scroll/demand. */
+const MAX_INITIAL_BATCHES = 5;
+
+/**
+ * Fetches channel info for subscriptions that are missing an avatar
+ * (e.g. imported from NewPipe) and updates them in the database.
+ * Runs sequentially to avoid overwhelming the extractor.
+ */
+async function hydrateAvatars(subs: SubscriptionEntity[]): Promise<number> {
+  let updated = 0;
+  for (const sub of subs) {
+    try {
+      const info = await fetchChannelInfo(sub.serviceId, sub.url);
+      const avatar = info.avatars?.[info.avatars.length - 1]?.url ?? null;
+      if (avatar && sub.id !== undefined) {
+        await database.subscriptions.update(sub.id, {
+          avatarUrl: avatar,
+          subscriberCount: info.subscriberCount ?? sub.subscriberCount,
+          description: info.description ?? sub.description,
+        });
+        updated++;
+      }
+    } catch {
+      // Skip failed channels — will retry on next visit
+    }
+  }
+  return updated;
+}
 
 /**
  * Converts an ISO date string or relative text ("2 days ago", "hace 3 semanas")
@@ -69,62 +97,62 @@ export default function SubscriptionsPage() {
     if (subs.length === 0) return;
     setLoadingFeed(true);
     try {
-      const allItems: StreamInfoItem[] = [];
       // Build a lookup map for subscription avatars by channel URL
       const avatarByUrl = new Map<string, string>();
       for (const sub of subs) {
         if (sub.avatarUrl) avatarByUrl.set(sub.url, sub.avatarUrl);
       }
-      // Split into batches and fetch ALL batches in parallel
+
+      // Split into batches
       const batches: SubscriptionEntity[][] = [];
       for (let i = 0; i < subs.length; i += SUBS_PER_BATCH) {
         batches.push(subs.slice(i, i + SUBS_PER_BATCH));
       }
-      const batchResults = await Promise.allSettled(
-        batches.map((batch) =>
-          Promise.allSettled(
-            batch.map((sub) => fetchChannelTabInfo(sub.serviceId, sub.url, "Videos"))
-          )
-        )
-      );
-      for (let bIdx = 0; bIdx < batchResults.length; bIdx++) {
-        const batchResult = batchResults[bIdx]!;
-        if (batchResult.status !== "fulfilled") continue;
-        const results = batchResult.value;
+
+      const accumulated: StreamInfoItem[] = [];
+      const seenUrls = new Set<string>();
+      const batchCount = Math.min(batches.length, MAX_INITIAL_BATCHES);
+
+      // Process batches sequentially so we can render progressively
+      for (let bIdx = 0; bIdx < batchCount; bIdx++) {
         const batch = batches[bIdx]!;
+        const results = await Promise.allSettled(
+          batch.map((sub) => fetchChannelTabInfo(sub.serviceId, sub.url, "Videos"))
+        );
+
         for (let rIdx = 0; rIdx < results.length; rIdx++) {
           const result = results[rIdx]!;
-          if (result.status === "fulfilled" && result.value) {
-            const sub = batch[rIdx]!;
-            const subAvatar = avatarByUrl.get(sub.url);
-            const enrichedItems = result.value.items.slice(0, VIDEOS_PER_CHANNEL).map((item) => {
-              const avatars = (item.uploaderAvatars.length === 0 && subAvatar)
-                ? [{ url: subAvatar, width: 88, height: 88 }]
-                : [...item.uploaderAvatars];
-              return {
-                ...item,
-                uploaderAvatars: avatars,
-                uploaderUrl: item.uploaderUrl || sub.url,
-                uploaderName: item.uploaderName || sub.name,
-              } as StreamInfoItem;
-            });
-            allItems.push(...enrichedItems);
+          if (result.status !== "fulfilled" || !result.value) continue;
+          const sub = batch[rIdx]!;
+          const subAvatar = avatarByUrl.get(sub.url);
+          const enrichedItems = result.value.items.slice(0, VIDEOS_PER_CHANNEL).map((item) => {
+            const avatars = (item.uploaderAvatars.length === 0 && subAvatar)
+              ? [{ url: subAvatar, width: 88, height: 88 }]
+              : [...item.uploaderAvatars];
+            return {
+              ...item,
+              uploaderAvatars: avatars,
+              uploaderUrl: item.uploaderUrl || sub.url,
+              uploaderName: item.uploaderName || sub.name,
+            } as StreamInfoItem;
+          });
+
+          for (const item of enrichedItems) {
+            if (!seenUrls.has(item.url)) {
+              seenUrls.add(item.url);
+              accumulated.push(item);
+            }
           }
         }
+
+        // Sort and render after each batch completes
+        const sorted = [...accumulated].sort((a, b) => {
+          const tsA = estimateTimestamp(a.uploadDate, a.textualUploadDate);
+          const tsB = estimateTimestamp(b.uploadDate, b.textualUploadDate);
+          return tsB - tsA;
+        });
+        setFeedItems(sorted);
       }
-      // Deduplicate + sort by date
-      const seen = new Set<string>();
-      const unique = allItems.filter((item) => {
-        if (seen.has(item.url)) return false;
-        seen.add(item.url);
-        return true;
-      });
-      unique.sort((a, b) => {
-        const tsA = estimateTimestamp(a.uploadDate, a.textualUploadDate);
-        const tsB = estimateTimestamp(b.uploadDate, b.textualUploadDate);
-        return tsB - tsA;
-      });
-      setFeedItems(unique);
     } catch {
       // Feed loading failed silently
     } finally {
@@ -137,6 +165,13 @@ export default function SubscriptionsPage() {
     subsLoadedRef.current = true;
     loadSubscriptions().then((subs) => {
       if (subs.length > 0) loadFeed(subs);
+      // Hydrate avatars for subscriptions imported without one
+      const missingAvatars = subs.filter((s) => !s.avatarUrl);
+      if (missingAvatars.length > 0) {
+        hydrateAvatars(missingAvatars).then((updated) => {
+          if (updated > 0) loadSubscriptions();
+        });
+      }
     });
   }, [loadSubscriptions, loadFeed]);
 

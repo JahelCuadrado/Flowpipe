@@ -141,6 +141,12 @@ export default function SettingsPage() {
             options={[...AUDIO_FORMAT_OPTIONS].map((f) => ({ value: f, label: f.toUpperCase() }))}
             onChange={settings.setDefaultAudioFormat}
           />
+          <ToggleRow
+            label="Desactivar doblaje por IA"
+            description="Usar siempre el audio original e ignorar pistas generadas por IA"
+            value={settings.disableAiDubbing}
+            onChange={settings.setDisableAiDubbing}
+          />
         </SettingsSection>
 
         {/* Content */}

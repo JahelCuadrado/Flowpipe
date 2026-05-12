@@ -18,7 +18,13 @@ export function useBackButton(): void {
     if (!Capacitor.isNativePlatform()) return;
 
     const listener = CapacitorApp.addListener("backButton", ({ canGoBack }) => {
-      // If video overlay is open, minimize it first
+      // If in fullscreen, exit fullscreen first
+      if (document.fullscreenElement) {
+        document.exitFullscreen().catch(() => {});
+        return;
+      }
+
+      // If video overlay is open, minimize it
       if (usePlayerStore.getState().isOverlayVisible) {
         usePlayerStore.getState().minimizeOverlay();
         return;

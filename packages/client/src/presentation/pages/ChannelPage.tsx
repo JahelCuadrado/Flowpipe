@@ -106,13 +106,8 @@ export default function ChannelPage() {
           </svg>
         </button>
         <div className="flex gap-2">
-          <button type="button" className="rounded-full bg-black/40 p-1.5 text-white">
+          <button type="button" onClick={() => navigate("/search")} className="rounded-full bg-black/40 p-1.5 text-white">
             <SearchIcon width={20} height={20} />
-          </button>
-          <button type="button" className="rounded-full bg-black/40 p-1.5 text-white">
-            <svg viewBox="0 0 24 24" width={20} height={20} fill="currentColor">
-              <path d="M12 8c1.1 0 2-.9 2-2s-.9-2-2-2-2 .9-2 2 .9 2 2 2zm0 2c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2zm0 6c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2z" />
-            </svg>
           </button>
         </div>
       </header>

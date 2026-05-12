@@ -10,6 +10,14 @@ import {
   SubtitlesIcon,
   ChevronDownIcon,
 } from "@/presentation/components/ui/Icons";
+import type { SubtitleStream } from "@newpipe/shared";
+
+/** Unique audio track option for the player settings panel. */
+export interface AudioTrackOption {
+  readonly locale: string;
+  readonly displayName: string;
+  readonly isDefault: boolean;
+}
 
 interface VideoPlayerControlsProps {
   readonly videoRef: React.RefObject<HTMLVideoElement | null>;
@@ -29,10 +37,14 @@ interface VideoPlayerControlsProps {
   /** Available playback speeds */
   readonly playbackSpeed?: number;
   readonly onSpeedChange?: (speed: number) => void;
-  /** Subtitle toggle */
-  readonly hasSubtitles?: boolean;
-  readonly subtitlesActive?: boolean;
-  readonly onSubtitlesToggle?: () => void;
+  /** Subtitle selection */
+  readonly subtitles?: readonly SubtitleStream[];
+  readonly activeSubtitle?: string | null;
+  readonly onSubtitleChange?: (languageCode: string | null) => void;
+  /** Audio track selection */
+  readonly audioTracks?: readonly AudioTrackOption[];
+  readonly activeAudioLocale?: string | null;
+  readonly onAudioTrackChange?: (locale: string) => void;
 }
 
 const HIDE_DELAY_MS = 3000;
@@ -63,15 +75,18 @@ export function VideoPlayerControls({
   onQualityChange,
   playbackSpeed = 1,
   onSpeedChange,
-  hasSubtitles,
-  subtitlesActive,
-  onSubtitlesToggle,
+  subtitles,
+  activeSubtitle,
+  onSubtitleChange,
+  audioTracks,
+  activeAudioLocale,
+  onAudioTrackChange,
 }: VideoPlayerControlsProps) {
   const [visible, setVisible] = useState(true);
   const [isSeeking, setIsSeeking] = useState(false);
   const [seekPosition, setSeekPosition] = useState(0);
   const [showSettings, setShowSettings] = useState(false);
-  const [settingsTab, setSettingsTab] = useState<"main" | "quality" | "speed">("main");
+  const [settingsTab, setSettingsTab] = useState<"main" | "quality" | "speed" | "subtitles" | "audio">("main");
   const [isFullscreen, setIsFullscreen] = useState(false);
   const hideTimerRef = useRef<ReturnType<typeof setTimeout>>(null);
   const seekBarRef = useRef<HTMLDivElement>(null);
@@ -104,10 +119,17 @@ export function VideoPlayerControls({
     }
   }, [isPlaying, visible, resetHideTimer]);
 
-  // Track fullscreen changes
+  // Track fullscreen changes and unlock orientation on exit
   useEffect(() => {
     function handleFullscreenChange() {
-      setIsFullscreen(!!document.fullscreenElement);
+      const isNowFullscreen = !!document.fullscreenElement;
+      setIsFullscreen(isNowFullscreen);
+      if (!isNowFullscreen) {
+        const orientation = screen.orientation as ScreenOrientation & { unlock?: () => void };
+        if (orientation.unlock) {
+          orientation.unlock();
+        }
+      }
     }
     document.addEventListener("fullscreenchange", handleFullscreenChange);
     return () => document.removeEventListener("fullscreenchange", handleFullscreenChange);
@@ -193,10 +215,17 @@ export function VideoPlayerControls({
       onClick={handleContainerTap}
       role="presentation"
     >
+      {/* Buffering spinner — always visible independently of controls */}
+      {isBuffering && !visible && (
+        <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
+          <div className="h-10 w-10 animate-spin rounded-full border-[3px] border-white/30 border-t-white" />
+        </div>
+      )}
+
       {/* Controls overlay with gradient backgrounds */}
       <div
         className={`absolute inset-0 flex flex-col justify-between transition-opacity duration-200 ${
-          visible || isBuffering ? "opacity-100" : "pointer-events-none opacity-0"
+          visible ? "opacity-100" : "pointer-events-none opacity-0"
         }`}
       >
         {/* ── Top bar: gradient + minimize + title ── */}
@@ -204,7 +233,13 @@ export function VideoPlayerControls({
           <div className="flex items-center gap-2">
             <button
               type="button"
-              onClick={onMinimize}
+              onClick={() => {
+                if (document.fullscreenElement) {
+                  document.exitFullscreen().then(onMinimize).catch(onMinimize);
+                } else {
+                  onMinimize();
+                }
+              }}
               className="rounded-full p-1 text-white active:bg-white/20"
               aria-label="Minimize"
             >
@@ -327,12 +362,18 @@ export function VideoPlayerControls({
             </span>
             <div className="flex items-center gap-1">
               {/* Subtitles toggle */}
-              {hasSubtitles && (
+              {subtitles && subtitles.length > 0 && (
                 <button
                   type="button"
-                  onClick={onSubtitlesToggle}
+                  onClick={() => {
+                    if (activeSubtitle) {
+                      onSubtitleChange?.(null);
+                    } else {
+                      onSubtitleChange?.(subtitles[0]!.languageCode);
+                    }
+                  }}
                   className={`rounded-full p-1.5 active:bg-white/20 ${
-                    subtitlesActive ? "text-white" : "text-white/50"
+                    activeSubtitle ? "text-white" : "text-white/50"
                   }`}
                   aria-label="Subtitles"
                 >
@@ -410,20 +451,39 @@ export function VideoPlayerControls({
                 )}
 
                 {/* Subtitles row */}
-                {hasSubtitles && (
+                {subtitles && subtitles.length > 0 && (
                   <button
                     type="button"
-                    onClick={() => {
-                      onSubtitlesToggle?.();
-                      setShowSettings(false);
-                    }}
+                    onClick={() => setSettingsTab("subtitles")}
                     className="flex w-full items-center gap-4 px-5 py-4 text-left active:bg-white/5"
                   >
                     <svg viewBox="0 0 24 24" width={22} height={22} fill="#aaa">
                       <path d="M20 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zm0 14H4V6h16v12zM6 10h2v2H6v-2zm0 4h8v2H6v-2zm10 0h2v2h-2v-2zm-6-4h8v2h-8v-2z" />
                     </svg>
                     <span className="flex-1 text-[15px] text-white">Subtítulos</span>
-                    <span className="text-[14px] text-[#aaa]">{subtitlesActive ? "Activados" : "Desactivados"}</span>
+                    <span className="text-[14px] text-[#aaa]">
+                      {activeSubtitle
+                        ? subtitles.find((s) => s.languageCode === activeSubtitle)?.displayLanguage ?? activeSubtitle
+                        : "Desactivados"}
+                    </span>
+                    <svg viewBox="0 0 24 24" width={18} height={18} fill="#717171"><path d="M10 6 8.59 7.41 13.17 12l-4.58 4.59L10 18l6-6z" /></svg>
+                  </button>
+                )}
+
+                {/* Audio track row */}
+                {audioTracks && audioTracks.length > 1 && (
+                  <button
+                    type="button"
+                    onClick={() => setSettingsTab("audio")}
+                    className="flex w-full items-center gap-4 px-5 py-4 text-left active:bg-white/5"
+                  >
+                    <svg viewBox="0 0 24 24" width={22} height={22} fill="#aaa">
+                      <path d="M12 3v9.28c-.47-.17-.97-.28-1.5-.28C8.01 12 6 14.01 6 16.5S8.01 21 10.5 21c2.31 0 4.2-1.75 4.45-4H15V6h4V3h-7z" />
+                    </svg>
+                    <span className="flex-1 text-[15px] text-white">Pista de audio</span>
+                    <span className="text-[14px] text-[#aaa]">
+                      {audioTracks.find((t) => t.locale === activeAudioLocale)?.displayName ?? "Original"}
+                    </span>
                     <svg viewBox="0 0 24 24" width={18} height={18} fill="#717171"><path d="M10 6 8.59 7.41 13.17 12l-4.58 4.59L10 18l6-6z" /></svg>
                   </button>
                 )}
@@ -507,6 +567,93 @@ export function VideoPlayerControls({
                 ) : (
                   <p className="px-5 py-4 text-[14px] text-[#aaa]">Automática</p>
                 )}
+              </div>
+            )}
+
+            {settingsTab === "subtitles" && (
+              <div className="pb-6">
+                <button
+                  type="button"
+                  onClick={() => setSettingsTab("main")}
+                  className="flex w-full items-center gap-3 border-b border-[#333] px-5 py-3 text-left"
+                >
+                  <svg viewBox="0 0 24 24" width={20} height={20} fill="white"><path d="M20 11H7.83l5.59-5.59L12 4l-8 8 8 8 1.41-1.41L7.83 13H20v-2z" /></svg>
+                  <span className="text-[15px] font-semibold text-white">Subtítulos</span>
+                </button>
+                {/* Disable option */}
+                <button
+                  type="button"
+                  onClick={() => { onSubtitleChange?.(null); setShowSettings(false); }}
+                  className={`flex w-full items-center gap-3 px-5 py-3.5 text-left active:bg-white/5 ${
+                    activeSubtitle === null ? "text-[#3ea6ff]" : "text-white"
+                  }`}
+                >
+                  <div className="flex h-5 w-5 shrink-0 items-center justify-center">
+                    {activeSubtitle === null && (
+                      <svg viewBox="0 0 24 24" width={18} height={18} fill="currentColor">
+                        <path d="M9 16.17 4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z" />
+                      </svg>
+                    )}
+                  </div>
+                  <span className="text-[14px]">Desactivar</span>
+                </button>
+                {subtitles?.map((sub) => (
+                  <button
+                    key={sub.languageCode}
+                    type="button"
+                    onClick={() => { onSubtitleChange?.(sub.languageCode); setShowSettings(false); }}
+                    className={`flex w-full items-center gap-3 px-5 py-3.5 text-left active:bg-white/5 ${
+                      activeSubtitle === sub.languageCode ? "text-[#3ea6ff]" : "text-white"
+                    }`}
+                  >
+                    <div className="flex h-5 w-5 shrink-0 items-center justify-center">
+                      {activeSubtitle === sub.languageCode && (
+                        <svg viewBox="0 0 24 24" width={18} height={18} fill="currentColor">
+                          <path d="M9 16.17 4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z" />
+                        </svg>
+                      )}
+                    </div>
+                    <span className="text-[14px]">
+                      {sub.displayLanguage}
+                      {sub.autoGenerated ? " (auto)" : ""}
+                    </span>
+                  </button>
+                ))}
+              </div>
+            )}
+
+            {settingsTab === "audio" && (
+              <div className="pb-6">
+                <button
+                  type="button"
+                  onClick={() => setSettingsTab("main")}
+                  className="flex w-full items-center gap-3 border-b border-[#333] px-5 py-3 text-left"
+                >
+                  <svg viewBox="0 0 24 24" width={20} height={20} fill="white"><path d="M20 11H7.83l5.59-5.59L12 4l-8 8 8 8 1.41-1.41L7.83 13H20v-2z" /></svg>
+                  <span className="text-[15px] font-semibold text-white">Pista de audio</span>
+                </button>
+                {audioTracks?.map((track) => (
+                  <button
+                    key={track.locale}
+                    type="button"
+                    onClick={() => { onAudioTrackChange?.(track.locale); setShowSettings(false); }}
+                    className={`flex w-full items-center gap-3 px-5 py-3.5 text-left active:bg-white/5 ${
+                      activeAudioLocale === track.locale ? "text-[#3ea6ff]" : "text-white"
+                    }`}
+                  >
+                    <div className="flex h-5 w-5 shrink-0 items-center justify-center">
+                      {activeAudioLocale === track.locale && (
+                        <svg viewBox="0 0 24 24" width={18} height={18} fill="currentColor">
+                          <path d="M9 16.17 4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z" />
+                        </svg>
+                      )}
+                    </div>
+                    <span className="text-[14px]">
+                      {track.displayName}
+                      {track.isDefault ? " (original)" : ""}
+                    </span>
+                  </button>
+                ))}
               </div>
             )}
           </div>

@@ -165,15 +165,59 @@ export async function exportSubscriptions(): Promise<void> {
 }
 
 /**
- * Imports subscriptions from a JSON file. Merges with existing (no duplicates).
+ * Subscription entry as exported by the original NewPipe Android app.
+ * Uses snake_case field names and wraps entries in a root object.
+ */
+interface NewPipeExportedSubscription {
+  readonly service_id: number;
+  readonly url: string;
+  readonly name: string;
+}
+
+interface NewPipeExportRoot {
+  readonly subscriptions?: readonly NewPipeExportedSubscription[];
+}
+
+/**
+ * Normalises a raw parsed JSON into a flat array of subscriptions,
+ * supporting both our own format (plain array with camelCase) and
+ * the original NewPipe format (object with "subscriptions" key and snake_case).
+ */
+function normaliseSubscriptionImport(raw: unknown): ExportedSubscription[] {
+  // Our format: plain array of { serviceId, url, name }
+  if (Array.isArray(raw)) {
+    return raw
+      .filter((item): item is Record<string, unknown> => item !== null && typeof item === "object")
+      .map((item) => ({
+        serviceId: (item["serviceId"] as number | undefined) ?? (item["service_id"] as number | undefined) ?? 0,
+        url: (item["url"] as string) ?? "",
+        name: (item["name"] as string) ?? "",
+      }));
+  }
+
+  // NewPipe format: { app_version?, subscriptions: [...] }
+  if (raw !== null && typeof raw === "object") {
+    const root = raw as NewPipeExportRoot;
+    if (Array.isArray(root.subscriptions)) {
+      return root.subscriptions.map((item) => ({
+        serviceId: item.service_id ?? 0,
+        url: item.url ?? "",
+        name: item.name ?? "",
+      }));
+    }
+  }
+
+  throw new Error("Invalid subscription file format");
+}
+
+/**
+ * Imports subscriptions from a JSON file. Supports both Flowpipe's own
+ * format and the original NewPipe export format. Merges with existing (no duplicates).
  */
 export async function importSubscriptions(file: File): Promise<number> {
   const text = await file.text();
-  const data = JSON.parse(text) as ExportedSubscription[];
-
-  if (!Array.isArray(data)) {
-    throw new Error("Invalid subscription file format");
-  }
+  const raw: unknown = JSON.parse(text);
+  const data = normaliseSubscriptionImport(raw);
 
   let imported = 0;
 

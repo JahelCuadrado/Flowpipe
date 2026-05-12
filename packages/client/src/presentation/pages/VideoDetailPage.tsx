@@ -13,6 +13,7 @@ import { VideoCard } from "@/presentation/components/ui/VideoCard";
 import { ErrorMessage } from "@/presentation/components/ui/ErrorMessage";
 import { VideoDetailSkeleton } from "@/presentation/components/ui/VideoDetailSkeleton";
 import { VideoPlayerControls } from "@/presentation/components/player/VideoPlayerControls";
+import type { AudioTrackOption } from "@/presentation/components/player/VideoPlayerControls";
 import { BottomSheet } from "@/presentation/components/ui/BottomSheet";
 import { ThumbUpIcon, ThumbDownIcon, ShareIcon, SaveIcon, DownloadIcon, CommentIcon } from "@/presentation/components/ui/Icons";
 import { flushSync } from "react-dom";
@@ -111,8 +112,15 @@ export default function VideoDetailPage() {
       return <VideoDetailSkeleton preloadData={preloadData} />;
     }
     return (
-      <div className="flex min-h-[60dvh] items-center justify-center">
-        <div className="h-8 w-8 animate-spin rounded-full border-2 border-[var(--color-border)] border-t-[var(--color-primary)]" />
+      <div className="flex flex-col bg-[#0f0f0f]">
+        <div
+          className="relative aspect-video w-full bg-black"
+          style={{ viewTransitionName: "hero-thumbnail" }}
+        >
+          <div className="absolute inset-0 flex items-center justify-center">
+            <div className="h-10 w-10 animate-spin rounded-full border-3 border-white/30 border-t-white" />
+          </div>
+        </div>
       </div>
     );
   }
@@ -186,11 +194,23 @@ const IS_CAPACITOR = typeof window !== "undefined"
   && "Capacitor" in window
   && (window as Record<string, unknown>)["Capacitor"] !== undefined;
 
-function resolvePlaybackConfig(info: StreamInfo, preferredResolution: string): PlaybackConfig {
+function resolvePlaybackConfig(
+  info: StreamInfo,
+  preferredResolution: string,
+  preferredAudioLocale?: string | null,
+  disableAiDubbing?: boolean,
+): PlaybackConfig {
+  // When the user explicitly chose a non-default audio locale, skip combined
+  // streams because their audio track is baked in and cannot be switched.
+  const hasCustomAudioLocale = !!preferredAudioLocale;
+
   // 1. Combined progressive stream (audio+video in one file) — works everywhere
-  const combinedStream = selectVideoStream(info.videoStreams, preferredResolution);
-  if (combinedStream?.url) {
-    return { mode: "combined", videoUrl: combinedStream.url, audioUrl: null, hlsUrl: null };
+  //    but only when the user hasn't picked a specific audio track.
+  if (!hasCustomAudioLocale) {
+    const combinedStream = selectVideoStream(info.videoStreams, preferredResolution);
+    if (combinedStream?.url) {
+      return { mode: "combined", videoUrl: combinedStream.url, audioUrl: null, hlsUrl: null };
+    }
   }
 
   // In Capacitor, CapacitorHttp intercepts <video>/<audio> src requests
@@ -204,14 +224,14 @@ function resolvePlaybackConfig(info: StreamInfo, preferredResolution: string): P
 
     // 2b. Separate as last resort in Capacitor
     const videoOnly = selectVideoStream(info.videoOnlyStreams, preferredResolution);
-    const audio = selectAudioStream(info.audioStreams);
+    const audio = selectAudioStream(info.audioStreams, preferredAudioLocale, disableAiDubbing);
     if (videoOnly?.url) {
       return { mode: "separate", videoUrl: videoOnly.url, audioUrl: audio?.url ?? null, hlsUrl: null };
     }
   } else {
     // 2. Separate video-only + audio (browser — most reliable, best quality)
     const videoOnly = selectVideoStream(info.videoOnlyStreams, preferredResolution);
-    const audio = selectAudioStream(info.audioStreams);
+    const audio = selectAudioStream(info.audioStreams, preferredAudioLocale, disableAiDubbing);
     if (videoOnly?.url) {
       return { mode: "separate", videoUrl: videoOnly.url, audioUrl: audio?.url ?? null, hlsUrl: null };
     }
@@ -249,6 +269,31 @@ function VideoPlayer({ info, contentFadeRef }: VideoPlayerProps) {
   const [activeSubtitle, setActiveSubtitle] = useState<string | null>(null);
   const [playbackSpeed, setPlaybackSpeed] = useState(1);
   const subtitleBlobUrls = useSubtitleBlobUrls(info.subtitles);
+  const disableAiDubbing = useSettingsStore((s) => s.disableAiDubbing);
+
+  // ── Build unique audio track options from available streams ──
+  const audioTracks = useMemo((): readonly AudioTrackOption[] => {
+    const seen = new Map<string, AudioTrackOption>();
+    for (const stream of info.audioStreams) {
+      const locale = stream.audioLocale;
+      if (!locale || seen.has(locale)) continue;
+      seen.set(locale, {
+        locale,
+        displayName: stream.audioTrackName ?? locale,
+        isDefault: stream.audioIsDefault,
+      });
+    }
+    return Array.from(seen.values());
+  }, [info.audioStreams]);
+
+  // Active audio locale: default to the original/default track
+  const defaultAudioLocale = useMemo(() => {
+    const defaultTrack = audioTracks.find((t) => t.isDefault);
+    return defaultTrack?.locale ?? audioTracks[0]?.locale ?? null;
+  }, [audioTracks]);
+
+  const [activeAudioLocale, setActiveAudioLocale] = useState<string | null>(null);
+  const resolvedAudioLocale = activeAudioLocale ?? defaultAudioLocale;
 
   // ── Progressive swipe-down to minimize (morph toward mini player) ──
   const swipeStartY = useRef<number | null>(null);
@@ -361,8 +406,8 @@ function VideoPlayer({ info, contentFadeRef }: VideoPlayerProps) {
   }), [isOverlayVisible]);
 
   const playback = useMemo(
-    () => resolvePlaybackConfig(info, defaultResolution),
-    [info, defaultResolution]
+    () => resolvePlaybackConfig(info, defaultResolution, resolvedAudioLocale, disableAiDubbing),
+    [info, defaultResolution, resolvedAudioLocale, disableAiDubbing]
   );
 
   // ── Sync audio element with video (for "separate" mode) ──
@@ -454,6 +499,20 @@ function VideoPlayer({ info, contentFadeRef }: VideoPlayerProps) {
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps -- playerStore stable via zustand; including causes infinite re-mount
   }, [playback.mode, playback.hlsUrl]);
+
+  // ── Switch HLS.js audio track when the user picks a different locale ──
+  useEffect(() => {
+    const hls = hlsRef.current;
+    if (!hls || !resolvedAudioLocale) return;
+    const tracks = hls.audioTracks;
+    if (tracks.length <= 1) return;
+    const targetIndex = tracks.findIndex((t) =>
+      t.lang === resolvedAudioLocale || t.name?.toLowerCase().includes(resolvedAudioLocale)
+    );
+    if (targetIndex >= 0 && targetIndex !== hls.audioTrack) {
+      hls.audioTrack = targetIndex;
+    }
+  }, [resolvedAudioLocale]);
 
   // Restore playback position from DB
   useEffect(() => {
@@ -650,8 +709,11 @@ function VideoPlayer({ info, contentFadeRef }: VideoPlayerProps) {
             }}
             onCanPlay={() => {
               const video = videoRef.current;
-              if (video && video.paused) {
+              if (!video) return;
+              if (video.paused) {
                 video.play().catch(() => {});
+              } else {
+                playerStore.setStatus("playing");
               }
             }}
           >
@@ -682,15 +744,14 @@ function VideoPlayer({ info, contentFadeRef }: VideoPlayerProps) {
             onMinimize={handleMinimize}
             title={info.name}
             subtitle={info.uploaderName ?? ""}
-            hasSubtitles={info.subtitles.length > 0}
-            subtitlesActive={activeSubtitle !== null}
-            onSubtitlesToggle={() => {
-              if (activeSubtitle) {
-                setActiveSubtitle(null);
-              } else if (info.subtitles.length > 0) {
-                setActiveSubtitle(info.subtitles[0]!.languageCode);
-              }
-            }}
+            subtitles={info.subtitles}
+            activeSubtitle={activeSubtitle}
+            onSubtitleChange={setActiveSubtitle}
+            audioTracks={disableAiDubbing
+              ? audioTracks.filter((t) => t.isDefault || audioTracks.length <= 1)
+              : audioTracks}
+            activeAudioLocale={resolvedAudioLocale}
+            onAudioTrackChange={setActiveAudioLocale}
             playbackSpeed={playbackSpeed}
             onSpeedChange={handleSpeedChange}
           />
@@ -738,12 +799,32 @@ function selectVideoStream(
 
 /**
  * Selects the best audio stream, preferring higher bitrate.
+ * When a preferredLocale is given, only streams matching that locale are considered.
+ * When disableAiDubbing is true, only the default (original) track is used.
  */
-function selectAudioStream(streams: readonly AudioStream[]): AudioStream | null {
+function selectAudioStream(
+  streams: readonly AudioStream[],
+  preferredLocale?: string | null,
+  disableAiDubbing?: boolean,
+): AudioStream | null {
   if (streams.length === 0) return null;
 
-  let best = streams[0]!;
-  for (const s of streams) {
+  let pool = [...streams];
+
+  // Filter by AI dubbing preference: keep only default (original) tracks
+  if (disableAiDubbing) {
+    const defaultOnly = pool.filter((s) => s.audioIsDefault || !s.audioTrackId);
+    if (defaultOnly.length > 0) pool = defaultOnly;
+  }
+
+  // Filter by preferred locale if provided
+  if (preferredLocale) {
+    const localeMatch = pool.filter((s) => s.audioLocale === preferredLocale);
+    if (localeMatch.length > 0) pool = localeMatch;
+  }
+
+  let best = pool[0]!;
+  for (const s of pool) {
     if (s.averageBitrate > best.averageBitrate) {
       best = s;
     }
