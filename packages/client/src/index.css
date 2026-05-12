@@ -62,14 +62,7 @@ body {
   background: var(--color-text-tertiary);
 }
 
-/* ─── Safe area padding for mobile (notch/island) ─────────────────────────── */
-.safe-area-top {
-  padding-top: env(safe-area-inset-top);
-}
 
-.safe-area-bottom {
-  padding-bottom: env(safe-area-inset-bottom);
-}
 
 /* Hide scrollbar while keeping scroll functionality */
 .scrollbar-none {
@@ -175,4 +168,47 @@ body {
 }
 .press-scale:active {
   transform: scale(0.96);
+}
+
+/* ─── View Transitions API (Shared Element Transitions) ───────────────────── */
+
+/* Hero thumbnail morph: smooth position + size animation */
+::view-transition-group(hero-thumbnail) {
+  animation-duration: 550ms;
+  animation-timing-function: cubic-bezier(0.4, 0, 0, 1);
+}
+
+/* Disable cross-fade on the hero element for a clean morph */
+::view-transition-old(hero-thumbnail),
+::view-transition-new(hero-thumbnail) {
+  animation: none;
+  mix-blend-mode: normal;
+}
+
+/* Page-level cross-fade for non-hero content */
+::view-transition-old(root) {
+  animation: vt-fade-out 300ms cubic-bezier(0.4, 0, 1, 1);
+}
+
+::view-transition-new(root) {
+  animation: vt-fade-in 450ms cubic-bezier(0, 0, 0.2, 1);
+}
+
+@keyframes vt-fade-out {
+  from { opacity: 1; }
+  to { opacity: 0; }
+}
+
+@keyframes vt-fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+/* Accessibility: disable all view transition animations for reduced motion */
+@media (prefers-reduced-motion: reduce) {
+  ::view-transition-group(*),
+  ::view-transition-old(*),
+  ::view-transition-new(*) {
+    animation-duration: 0.01ms !important;
+  }
 }

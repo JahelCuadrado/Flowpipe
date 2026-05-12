@@ -77,8 +77,8 @@ export default function YouPage() {
   return (
     <div className="flex flex-col bg-[#0f0f0f]">
       {/* Header */}
-      <header className="sticky top-0 z-30 flex items-center justify-between bg-[#0f0f0f] px-4 py-2.5">
-        <h1 className="text-lg font-semibold text-white">You</h1>
+      <header className="sticky top-0 z-30 flex items-center justify-between bg-[#0f0f0f] px-4 pb-2.5 pt-2.5">
+        <h1 className="text-[24px] font-bold text-white">You</h1>
         <div className="flex items-center gap-3">
           <button
             type="button"
@@ -86,7 +86,7 @@ export default function YouPage() {
             aria-label="Search"
             onClick={() => navigate("/search")}
           >
-            <SearchIcon width={22} height={22} />
+            <SearchIcon width={26} height={26} />
           </button>
           <button
             type="button"
@@ -94,7 +94,7 @@ export default function YouPage() {
             aria-label="Settings"
             onClick={() => navigate("/settings")}
           >
-            <SettingsIcon width={22} height={22} />
+            <SettingsIcon width={26} height={26} />
           </button>
         </div>
       </header>

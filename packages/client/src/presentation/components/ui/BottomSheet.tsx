@@ -144,6 +144,7 @@ export function BottomSheet({
           isDragging ? "" : "transition-transform"
         }`}
         style={{
+          height: maxHeight,
           maxHeight,
           transform: `translateY(${isAnimatingIn ? translateY : 100}${isAnimatingIn ? "px" : "%"})`,
           transitionDuration: isDragging ? "0ms" : `${ANIMATION_DURATION_MS}ms`,

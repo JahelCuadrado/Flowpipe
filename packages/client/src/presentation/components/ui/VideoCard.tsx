@@ -1,5 +1,7 @@
+import { useRef } from "react";
 import { useNavigate } from "react-router";
 import { MoreVertIcon } from "@/presentation/components/ui/Icons";
+import { useVideoNavigation, getReverseTransitionUrl, clearReverseTransitionUrl } from "@/presentation/hooks/useVideoNavigation";
 import type { StreamInfoItem } from "@newpipe/shared";
 
 interface VideoCardProps {
@@ -11,13 +13,14 @@ interface VideoCardProps {
  * Used in feeds, search results, related videos.
  */
 export function VideoCard({ item }: VideoCardProps) {
-  const navigate = useNavigate();
+  const navigateToVideo = useVideoNavigation();
+  const thumbnailRef = useRef<HTMLDivElement>(null);
 
   const thumbnail = item.thumbnails[item.thumbnails.length - 1]?.url ?? item.thumbnails[0]?.url ?? "";
   const duration = formatDuration(item.duration);
 
   function handleClick() {
-    navigate(`/watch?url=${encodeURIComponent(item.url)}`);
+    navigateToVideo(item, thumbnailRef.current);
   }
 
   return (
@@ -27,7 +30,17 @@ export function VideoCard({ item }: VideoCardProps) {
       className="flex w-full gap-2.5 p-2 text-left active:bg-white/5"
     >
       {/* Thumbnail */}
-      <div className="relative aspect-video w-[168px] shrink-0 overflow-hidden rounded-lg bg-[#1a1a1a]">
+      <div
+        ref={(el) => {
+          (thumbnailRef as React.MutableRefObject<HTMLDivElement | null>).current = el;
+          // Assign transition name if this card is the target of a reverse transition
+          if (el && getReverseTransitionUrl() === item.url) {
+            el.style.viewTransitionName = "hero-thumbnail";
+            requestAnimationFrame(() => clearReverseTransitionUrl());
+          }
+        }}
+        className="relative aspect-video w-[168px] shrink-0 overflow-hidden rounded-lg bg-[#1a1a1a]"
+      >
         {thumbnail && (
           <img src={thumbnail} alt="" loading="lazy" className="h-full w-full object-cover" />
         )}
@@ -85,14 +98,16 @@ export function VideoCard({ item }: VideoCardProps) {
  * Used in Home page, trending, channel videos.
  */
 export function VideoCardGrid({ item }: VideoCardProps) {
+  const navigateToVideo = useVideoNavigation();
   const navigate = useNavigate();
+  const thumbnailRef = useRef<HTMLDivElement>(null);
 
   const thumbnail = item.thumbnails[item.thumbnails.length - 1]?.url ?? item.thumbnails[0]?.url ?? "";
   const duration = formatDuration(item.duration);
   const avatar = item.uploaderAvatars?.[0]?.url ?? null;
 
   function handleClick() {
-    navigate(`/watch?url=${encodeURIComponent(item.url)}`);
+    navigateToVideo(item, thumbnailRef.current);
   }
 
   function handleChannelClick(event: React.MouseEvent) {
@@ -109,7 +124,16 @@ export function VideoCardGrid({ item }: VideoCardProps) {
       className="flex w-full flex-col text-left active:bg-white/5"
     >
       {/* Thumbnail — full width, 16:9 */}
-      <div className="relative mx-3 mt-1 aspect-video w-[calc(100%-24px)] overflow-hidden rounded-lg bg-[#1a1a1a]">
+      <div
+        ref={(el) => {
+          (thumbnailRef as React.MutableRefObject<HTMLDivElement | null>).current = el;
+          if (el && getReverseTransitionUrl() === item.url) {
+            el.style.viewTransitionName = "hero-thumbnail";
+            requestAnimationFrame(() => clearReverseTransitionUrl());
+          }
+        }}
+        className="relative mx-3 mt-1 aspect-video w-[calc(100%-24px)] overflow-hidden rounded-lg bg-[#1a1a1a]"
+      >
         {thumbnail && (
           <img src={thumbnail} alt="" loading="lazy" className="h-full w-full object-cover" />
         )}

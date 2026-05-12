@@ -160,6 +160,23 @@ function parseChannelResponse(
     banners = toImageInfoList(
       getThumbnailsFromInfoItem(c4Header["banner"] as Record<string, unknown>)
     );
+  } else if (pageHeader) {
+    const pageHeaderViewModel = (pageHeader["content"] as Record<string, unknown>)
+      ?.["pageHeaderViewModel"] as Record<string, unknown> | undefined;
+    const bannerModel = pageHeaderViewModel?.["banner"] as Record<string, unknown> | undefined;
+    const imageBannerViewModel = bannerModel?.["imageBannerViewModel"] as Record<string, unknown> | undefined;
+    const bannerImage = imageBannerViewModel?.["image"] as Record<string, unknown> | undefined;
+    const bannerSources = bannerImage?.["sources"] as Array<Record<string, unknown>> | undefined;
+    if (bannerSources) {
+      banners = bannerSources
+        .filter((s) => typeof s["url"] === "string")
+        .map((s) => ({
+          url: s["url"] as string,
+          width: (s["width"] as number) ?? 0,
+          height: (s["height"] as number) ?? 0,
+          estimatedResolutionLevel: ImageResolutionLevel.Unknown,
+        }));
+    }
   }
 
   // Subscriber count
@@ -171,11 +188,43 @@ function parseChannelResponse(
     if (subText) {
       subscriberCount = parseMixedNumber(subText);
     }
+  } else if (pageHeader) {
+    const pageHeaderViewModel = (pageHeader["content"] as Record<string, unknown>)
+      ?.["pageHeaderViewModel"] as Record<string, unknown> | undefined;
+    const metadataObj = pageHeaderViewModel?.["metadata"] as Record<string, unknown> | undefined;
+    const contentMetadata = metadataObj?.["contentMetadataViewModel"] as Record<string, unknown> | undefined;
+    const metadataRows = contentMetadata?.["metadataRows"] as Array<Record<string, unknown>> | undefined;
+    if (metadataRows) {
+      for (const row of metadataRows) {
+        const parts = row["metadataParts"] as Array<Record<string, unknown>> | undefined;
+        if (!parts) continue;
+        for (const part of parts) {
+          const textObj = part["text"] as Record<string, unknown> | undefined;
+          const content = textObj?.["content"] as string | undefined;
+          if (content && /subscriber/i.test(content)) {
+            subscriberCount = parseMixedNumber(content);
+            break;
+          }
+        }
+        if (subscriberCount !== null) break;
+      }
+    }
   }
 
   // Verified
+  let verified = false;
   const badges = c4Header?.["badges"] as unknown[] | undefined;
-  const verified = isVerified(badges);
+  verified = isVerified(badges);
+  if (!verified && pageHeader) {
+    const pageHeaderViewModel = (pageHeader["content"] as Record<string, unknown>)
+      ?.["pageHeaderViewModel"] as Record<string, unknown> | undefined;
+    const titleObj = pageHeaderViewModel?.["title"] as Record<string, unknown> | undefined;
+    const dynamicText = titleObj?.["dynamicTextViewModel"] as Record<string, unknown> | undefined;
+    const badgeOnTitle = dynamicText?.["badgeViewModel"] as Record<string, unknown> | undefined;
+    if (badgeOnTitle) {
+      verified = true;
+    }
+  }
 
   // Tags
   const keywords = (channelMetadata?.["keywords"] as string) ?? "";

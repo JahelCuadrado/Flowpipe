@@ -3,20 +3,21 @@ import { z } from "zod";
 import { ServiceId } from "@newpipe/shared";
 import { NewPipeExtractor } from "@newpipe/extractor";
 import { channelCache } from "../middleware/cache.js";
+import { serviceIdSchema, parsePageBody } from "../schemas/common.js";
 
 const channelQuerySchema = z.object({
-  serviceId: z.coerce.number().int().min(0).max(4),
+  serviceId: serviceIdSchema,
   url: z.string().url(),
 });
 
 const channelTabQuerySchema = z.object({
-  serviceId: z.coerce.number().int().min(0).max(4),
+  serviceId: serviceIdSchema,
   url: z.string().url(),
   tab: z.string().min(1),
 });
 
 const channelTabNextPageSchema = z.object({
-  serviceId: z.coerce.number().int().min(0).max(4),
+  serviceId: serviceIdSchema,
   url: z.string().url(),
   tab: z.string().min(1),
   pageBody: z.string().min(1),
@@ -52,7 +53,7 @@ export async function registerChannelRoutes(server: FastifyInstance): Promise<vo
   server.post("/channel/tab/next", async (request) => {
     const body = channelTabNextPageSchema.parse(request.body);
     const service = NewPipeExtractor.getService(body.serviceId as ServiceId);
-    const page = JSON.parse(body.pageBody) as import("@newpipe/shared").Page;
+    const page = parsePageBody(body.pageBody);
 
     const info = await service.getChannelTabNextPage(body.url, body.tab, page);
 

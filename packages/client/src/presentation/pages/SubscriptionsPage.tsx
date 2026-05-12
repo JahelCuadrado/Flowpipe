@@ -11,6 +11,36 @@ import type { StreamInfoItem } from "@newpipe/shared";
 const SUBS_PER_BATCH = 6;
 const VIDEOS_PER_CHANNEL = 8;
 
+/**
+ * Converts an ISO date string or relative text ("2 days ago", "hace 3 semanas")
+ * into a Unix timestamp for chronological sorting.
+ * Returns 0 for unparseable values (sorts them last).
+ */
+function estimateTimestamp(isoDate: string | null, relativeText: string | null): number {
+  if (isoDate) {
+    const ms = Date.parse(isoDate);
+    if (!Number.isNaN(ms)) return ms;
+  }
+  if (!relativeText) return 0;
+
+  const text = relativeText.toLowerCase();
+  const match = text.match(/(\d+)/);
+  if (!match) return 0;
+  const amount = parseInt(match[1]!, 10);
+  const now = Date.now();
+
+  // English and Spanish relative date patterns
+  if (/second|segundo/i.test(text)) return now - amount * 1_000;
+  if (/minute|minuto/i.test(text)) return now - amount * 60_000;
+  if (/hour|hora/i.test(text)) return now - amount * 3_600_000;
+  if (/day|día|dia/i.test(text)) return now - amount * 86_400_000;
+  if (/week|semana/i.test(text)) return now - amount * 604_800_000;
+  if (/month|mes/i.test(text)) return now - amount * 2_592_000_000;
+  if (/year|año/i.test(text)) return now - amount * 31_536_000_000;
+
+  return 0;
+}
+
 export default function SubscriptionsPage() {
   const [subscriptions, setSubscriptions] = useState<SubscriptionEntity[]>([]);
   const [feedItems, setFeedItems] = useState<StreamInfoItem[]>([]);
@@ -24,10 +54,15 @@ export default function SubscriptionsPage() {
 
   const loadSubscriptions = useCallback(async () => {
     setLoading(true);
-    const subs = await database.subscriptions.orderBy("name").toArray();
-    setSubscriptions(subs);
-    setLoading(false);
-    return subs;
+    try {
+      const subs = await database.subscriptions.orderBy("name").toArray();
+      setSubscriptions(subs);
+      setLoading(false);
+      return subs;
+    } catch {
+      setLoading(false);
+      return [];
+    }
   }, []);
 
   const loadFeed = useCallback(async (subs: SubscriptionEntity[]) => {
@@ -40,32 +75,38 @@ export default function SubscriptionsPage() {
       for (const sub of subs) {
         if (sub.avatarUrl) avatarByUrl.set(sub.url, sub.avatarUrl);
       }
-      // Load in batches to avoid overwhelming the server
+      // Split into batches and fetch ALL batches in parallel
+      const batches: SubscriptionEntity[][] = [];
       for (let i = 0; i < subs.length; i += SUBS_PER_BATCH) {
-        const batch = subs.slice(i, i + SUBS_PER_BATCH);
-        const results = await Promise.allSettled(
-          batch.map((sub) => fetchChannelTabInfo(sub.serviceId, sub.url, "Videos"))
-        );
-        for (let batchIdx = 0; batchIdx < results.length; batchIdx++) {
-          const result = results[batchIdx]!;
+        batches.push(subs.slice(i, i + SUBS_PER_BATCH));
+      }
+      const batchResults = await Promise.allSettled(
+        batches.map((batch) =>
+          Promise.allSettled(
+            batch.map((sub) => fetchChannelTabInfo(sub.serviceId, sub.url, "Videos"))
+          )
+        )
+      );
+      for (let bIdx = 0; bIdx < batchResults.length; bIdx++) {
+        const batchResult = batchResults[bIdx]!;
+        if (batchResult.status !== "fulfilled") continue;
+        const results = batchResult.value;
+        const batch = batches[bIdx]!;
+        for (let rIdx = 0; rIdx < results.length; rIdx++) {
+          const result = results[rIdx]!;
           if (result.status === "fulfilled" && result.value) {
-            const sub = batch[batchIdx]!;
+            const sub = batch[rIdx]!;
             const subAvatar = avatarByUrl.get(sub.url);
             const enrichedItems = result.value.items.slice(0, VIDEOS_PER_CHANNEL).map((item) => {
-              const patched = { ...item };
-              // Inject subscription avatar when the extractor doesn't provide one
-              if (item.uploaderAvatars.length === 0 && subAvatar) {
-                (patched as Record<string, unknown>).uploaderAvatars = [{ url: subAvatar, width: 88, height: 88 }];
-              }
-              // Ensure uploaderUrl is set so channel filtering works reliably
-              if (!item.uploaderUrl) {
-                (patched as Record<string, unknown>).uploaderUrl = sub.url;
-              }
-              // Ensure uploaderName is set from the subscription
-              if (!item.uploaderName) {
-                (patched as Record<string, unknown>).uploaderName = sub.name;
-              }
-              return patched as StreamInfoItem;
+              const avatars = (item.uploaderAvatars.length === 0 && subAvatar)
+                ? [{ url: subAvatar, width: 88, height: 88 }]
+                : [...item.uploaderAvatars];
+              return {
+                ...item,
+                uploaderAvatars: avatars,
+                uploaderUrl: item.uploaderUrl || sub.url,
+                uploaderName: item.uploaderName || sub.name,
+              } as StreamInfoItem;
             });
             allItems.push(...enrichedItems);
           }
@@ -79,9 +120,9 @@ export default function SubscriptionsPage() {
         return true;
       });
       unique.sort((a, b) => {
-        const dateA = a.uploadDate ?? a.textualUploadDate ?? "";
-        const dateB = b.uploadDate ?? b.textualUploadDate ?? "";
-        return dateB.localeCompare(dateA);
+        const tsA = estimateTimestamp(a.uploadDate, a.textualUploadDate);
+        const tsB = estimateTimestamp(b.uploadDate, b.textualUploadDate);
+        return tsB - tsA;
       });
       setFeedItems(unique);
     } catch {
@@ -136,15 +177,15 @@ export default function SubscriptionsPage() {
   return (
     <PullToRefresh onRefresh={handleRefresh}>
       {/* Header */}
-      <header className="sticky top-0 z-30 flex items-center justify-between bg-[#0f0f0f] px-4 py-2.5">
-        <h1 className="text-lg font-semibold text-white">Suscripciones</h1>
+      <header className="sticky top-0 z-30 flex items-center justify-between bg-[#0f0f0f] px-4 pb-2.5 pt-2.5">
+        <h1 className="text-[24px] font-bold text-white">Suscripciones</h1>
         <button
           type="button"
           className="text-white"
           aria-label="Search"
           onClick={() => navigate("/search")}
         >
-          <SearchIcon width={22} height={22} />
+          <SearchIcon width={26} height={26} />
         </button>
       </header>
 
@@ -168,7 +209,7 @@ export default function SubscriptionsPage() {
         <>
           {/* Channel avatars horizontal scroll */}
           <div
-            className="sticky top-[44px] z-20 overflow-x-auto bg-[#0f0f0f] px-3 py-2.5 scrollbar-none"
+            className="sticky top-[46px] z-20 overflow-x-auto bg-[#0f0f0f] px-3 py-2.5 scrollbar-none"
           >
             <div className="flex gap-3">
               {/* "All" chip */}

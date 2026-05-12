@@ -3,16 +3,17 @@ import { z } from "zod";
 import { ServiceId } from "@newpipe/shared";
 import { NewPipeExtractor } from "@newpipe/extractor";
 import { searchCache } from "../middleware/cache.js";
+import { serviceIdSchema, parsePageBody } from "../schemas/common.js";
 
 const searchQuerySchema = z.object({
-  serviceId: z.coerce.number().int().min(0).max(4),
+  serviceId: serviceIdSchema,
   q: z.string().min(1).max(500),
   contentFilter: z.string().optional(),
   sortFilter: z.string().optional(),
 });
 
 const searchNextPageSchema = z.object({
-  serviceId: z.coerce.number().int().min(0).max(4),
+  serviceId: serviceIdSchema,
   q: z.string().min(1).max(500),
   contentFilter: z.string().optional(),
   sortFilter: z.string().optional(),
@@ -20,7 +21,7 @@ const searchNextPageSchema = z.object({
 });
 
 const suggestionsQuerySchema = z.object({
-  serviceId: z.coerce.number().int().min(0).max(4),
+  serviceId: serviceIdSchema,
   q: z.string().min(1).max(500),
 });
 
@@ -44,7 +45,7 @@ export async function registerSearchRoutes(server: FastifyInstance): Promise<voi
   server.post("/search/next", async (request) => {
     const body = searchNextPageSchema.parse(request.body);
     const service = NewPipeExtractor.getService(body.serviceId as ServiceId);
-    const page = JSON.parse(body.pageBody) as import("@newpipe/shared").Page;
+    const page = parsePageBody(body.pageBody);
 
     const result = await service.searchNextPage(
       body.q,

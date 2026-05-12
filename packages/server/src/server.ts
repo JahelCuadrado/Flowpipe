@@ -12,21 +12,34 @@ import { initExtractor } from "./services/extractorInit.js";
 
 const PORT = parseInt(process.env["SERVER_PORT"] ?? "3001", 10);
 const HOST = process.env["SERVER_HOST"] ?? "0.0.0.0";
+const IS_PRODUCTION = process.env["NODE_ENV"] === "production";
+
+/**
+ * Allowed origins for CORS in production.
+ * Includes Capacitor WebView and localhost for development.
+ */
+const ALLOWED_ORIGINS = [
+  "capacitor://localhost",
+  "http://localhost",
+  "http://localhost:5173",
+];
 
 async function bootstrap(): Promise<void> {
   const server = Fastify({
     logger: {
       level: "info",
-      transport: {
-        target: "pino-pretty",
-        options: { translateTime: "HH:MM:ss Z", ignore: "pid,hostname" },
-      },
+      transport: IS_PRODUCTION
+        ? undefined
+        : {
+            target: "pino-pretty",
+            options: { translateTime: "HH:MM:ss Z", ignore: "pid,hostname" },
+          },
     },
   });
 
   // ─── Plugins ────────────────────────────────────────────────────────
   await server.register(cors, {
-    origin: true,
+    origin: IS_PRODUCTION ? ALLOWED_ORIGINS : true,
     methods: ["GET", "POST"],
   });
 

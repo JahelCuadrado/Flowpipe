@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import { BackgroundPlayback } from "@/infrastructure/native/BackgroundPlayback";
+import type { StreamInfoItem } from "@newpipe/shared";
 
 type PlayerStatus = "idle" | "loading" | "playing" | "paused" | "buffering" | "error";
 
@@ -14,6 +15,10 @@ interface PlayerState {
   readonly volume: number;
   readonly isMuted: boolean;
   readonly isMinimized: boolean;
+  // ── Video overlay ──
+  readonly overlayVideoUrl: string | null;
+  readonly isOverlayVisible: boolean;
+  readonly overlayPreloadData: StreamInfoItem | null;
 }
 
 interface PlayerActions {
@@ -28,6 +33,10 @@ interface PlayerActions {
   setPosition(position: number): void;
   setStatus(status: PlayerStatus): void;
   toggleMinimized(): void;
+  // ── Overlay ──
+  openVideo(url: string, preloadData?: StreamInfoItem | null): void;
+  minimizeOverlay(): void;
+  showOverlay(): void;
 }
 
 /**
@@ -46,6 +55,9 @@ export const usePlayerStore = create<PlayerState & PlayerActions>()((set) => ({
   volume: 1,
   isMuted: false,
   isMinimized: true,
+  overlayVideoUrl: null,
+  isOverlayVisible: false,
+  overlayPreloadData: null,
 
   // ─── Actions ─────────────────────────────────────────────────────
   play: (url, title, uploader, thumbnail) => {
@@ -73,6 +85,9 @@ export const usePlayerStore = create<PlayerState & PlayerActions>()((set) => ({
       currentThumbnail: null,
       duration: 0,
       position: 0,
+      overlayVideoUrl: null,
+      isOverlayVisible: false,
+      overlayPreloadData: null,
     });
   },
 
@@ -83,4 +98,28 @@ export const usePlayerStore = create<PlayerState & PlayerActions>()((set) => ({
   setPosition: (position) => set({ position }),
   setStatus: (status) => set({ status }),
   toggleMinimized: () => set((state) => ({ isMinimized: !state.isMinimized })),
+
+  // ─── Overlay ─────────────────────────────────────────────────────
+  openVideo: (url, preloadData = null) => {
+    BackgroundPlayback.stop().catch(() => {});
+    set({
+      overlayVideoUrl: url,
+      isOverlayVisible: true,
+      isMinimized: false,
+      overlayPreloadData: preloadData,
+      status: "idle",
+      duration: 0,
+      position: 0,
+    });
+  },
+
+  minimizeOverlay: () => set({
+    isOverlayVisible: false,
+    isMinimized: true,
+  }),
+
+  showOverlay: () => set({
+    isOverlayVisible: true,
+    isMinimized: false,
+  }),
 }));

@@ -83,8 +83,18 @@ export default function ChannelPage() {
   if (error) return <ErrorMessage message={error} onRetry={refetch} />;
   if (!channel) return null;
 
-  const banner = channel.banners[0]?.url;
+  // Pick banner closest to ~1200px wide (good for mobile, not too heavy)
+  const banner = channel.banners.length > 0
+    ? channel.banners.reduce((best, current) =>
+        Math.abs(current.width - 1200) < Math.abs(best.width - 1200) ? current : best
+      ).url
+    : undefined;
   const avatar = channel.avatars[channel.avatars.length - 1]?.url ?? channel.avatars[0]?.url;
+
+  // Debug: log banner data in development
+  if (import.meta.env.DEV || channel.banners.length > 0) {
+    console.log('[ChannelPage] banners:', channel.banners.length, 'selected:', banner?.substring(0, 80));
+  }
 
   return (
     <div className="flex min-h-full flex-col bg-[#0f0f0f]">
@@ -109,25 +119,55 @@ export default function ChannelPage() {
 
       {/* ── Banner ─── */}
       {banner ? (
-        <div className="aspect-[3/1] w-full overflow-hidden bg-[#181818]">
-          <img src={banner} alt="" className="h-full w-full object-cover" />
+        <div className="w-full overflow-hidden bg-[#181818]" style={{ aspectRatio: '6 / 1' }}>
+          <img
+            src={banner}
+            alt=""
+            className="h-full w-full object-cover"
+            onError={(e) => {
+              console.error('[ChannelPage] Banner failed to load:', banner);
+              (e.currentTarget.parentElement as HTMLElement).style.display = 'none';
+            }}
+          />
         </div>
       ) : (
         <div className="h-16" />
       )}
 
-      {/* ── Channel info ─── */}
-      <ChannelHeader serviceId={serviceId} channel={channel} avatar={avatar} />
+      {/* ── Channel info + Subscribe ─── */}
+      <div className="flex items-start gap-3 px-4 py-4">
+        {/* Avatar */}
+        {avatar && (
+          <img src={avatar} alt="" className="h-[72px] w-[72px] shrink-0 rounded-full object-cover" />
+        )}
 
-      {/* ── Description ─── */}
-      {channel.description && (
-        <p className="line-clamp-2 px-4 pb-3 text-[12px] leading-relaxed text-[#aaa]">
-          {channel.description}
-        </p>
-      )}
+        {/* Name + subs + subscribe button */}
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-1.5">
+            <h1 className="truncate text-[20px] font-bold leading-tight text-white">{channel.name}</h1>
+            {channel.verified && (
+              <svg viewBox="0 0 24 24" width={14} height={14} className="shrink-0 text-[#aaa]" fill="currentColor">
+                <path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10 10-4.5 10-10S17.5 2 12 2zm-2 15-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z" />
+              </svg>
+            )}
+          </div>
+          {channel.subscriberCount !== null && (
+            <p className="mt-0.5 truncate text-[12px] text-[#aaa]">
+              {formatCount(channel.subscriberCount)} de suscriptores
+            </p>
+          )}
 
-      {/* ── Subscribe / Join buttons ─── */}
-      <ChannelActions serviceId={serviceId} channel={channel} avatar={avatar} />
+          {/* Description */}
+          {channel.description && (
+            <p className="mt-1 line-clamp-2 text-[12px] leading-relaxed text-[#aaa]">
+              {channel.description}
+            </p>
+          )}
+
+          {/* Subscribe button */}
+          <ChannelActions serviceId={serviceId} channel={channel} avatar={avatar} />
+        </div>
+      </div>
 
       {/* ── Tabs ─── */}
       <div className="mt-2 overflow-x-auto border-b border-[#272727] scrollbar-none">
@@ -195,34 +235,6 @@ interface ChannelData {
   readonly description: string | null;
 }
 
-function ChannelHeader({ channel, avatar }: { readonly serviceId: number; readonly channel: ChannelData; readonly avatar: string | undefined }) {
-  return (
-    <div className="flex items-center gap-4 px-4 py-4">
-      {/* Avatar */}
-      {avatar && (
-        <img src={avatar} alt="" className="h-[72px] w-[72px] shrink-0 rounded-full object-cover" />
-      )}
-
-      {/* Name + handle + subs */}
-      <div className="min-w-0 flex-1">
-        <div className="flex items-center gap-1.5">
-          <h1 className="truncate text-[22px] font-bold text-white">{channel.name}</h1>
-          {channel.verified && (
-            <svg viewBox="0 0 24 24" width={14} height={14} className="shrink-0 text-[#aaa]" fill="currentColor">
-              <path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10 10-4.5 10-10S17.5 2 12 2zm-2 15-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z" />
-            </svg>
-          )}
-        </div>
-        <div className="mt-0.5 flex flex-wrap items-center gap-1 text-[12px] text-[#aaa]">
-          {channel.subscriberCount !== null && (
-            <span>{formatCount(channel.subscriberCount)} de suscriptores</span>
-          )}
-        </div>
-      </div>
-    </div>
-  );
-}
-
 function ChannelActions({ serviceId, channel, avatar }: { readonly serviceId: number; readonly channel: ChannelData; readonly avatar: string | undefined }) {
   const {
     isSubscribed,
@@ -237,7 +249,7 @@ function ChannelActions({ serviceId, channel, avatar }: { readonly serviceId: nu
   );
 
   return (
-    <div className="flex gap-3 px-4">
+    <div className="mt-3 flex">
       <button
         type="button"
         onClick={toggleSubscription}

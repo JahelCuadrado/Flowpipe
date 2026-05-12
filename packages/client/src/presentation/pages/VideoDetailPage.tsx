@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect, useCallback, useMemo } from "react";
 import { createPortal } from "react-dom";
-import { useSearchParams, useNavigate } from "react-router";
+import { useNavigate } from "react-router";
 import Hls from "hls.js";
 import { fetchStreamInfo, fetchCommentsInfo, fetchCommentsNextPage } from "@/infrastructure/api/ApiService";
 import { useSettingsStore } from "@/application/stores/settingsStore";
@@ -11,11 +11,12 @@ import { recordStreamView } from "@/application/services/PersistenceService";
 import { database } from "@/infrastructure/database/AppDatabase";
 import { VideoCard } from "@/presentation/components/ui/VideoCard";
 import { ErrorMessage } from "@/presentation/components/ui/ErrorMessage";
-import { LoadingScreen } from "@/presentation/components/ui/LoadingScreen";
+import { VideoDetailSkeleton } from "@/presentation/components/ui/VideoDetailSkeleton";
 import { VideoPlayerControls } from "@/presentation/components/player/VideoPlayerControls";
 import { BottomSheet } from "@/presentation/components/ui/BottomSheet";
 import { ThumbUpIcon, ThumbDownIcon, ShareIcon, SaveIcon, DownloadIcon, CommentIcon } from "@/presentation/components/ui/Icons";
-import type { StreamInfo, VideoStream, AudioStream, CommentItem, Page, SubtitleStream } from "@newpipe/shared";
+import { flushSync } from "react-dom";
+import type { StreamInfo, VideoStream, AudioStream, CommentInfo, CommentItem, Page, SubtitleStream } from "@newpipe/shared";
 
 /**
  * Fetches subtitle VTT files and returns blob URLs that bypass cross-origin restrictions.
@@ -62,17 +63,32 @@ function useSubtitleBlobUrls(subtitles: readonly SubtitleStream[]): Map<string, 
 }
 
 export default function VideoDetailPage() {
-  const [searchParams] = useSearchParams();
-  const url = searchParams.get("url") ?? "";
+  const url = usePlayerStore((s) => s.overlayVideoUrl) ?? "";
+  const preloadData = usePlayerStore((s) => s.overlayPreloadData);
   const serviceId = useSettingsStore((s) => s.defaultServiceId);
   const showRelated = useSettingsStore((s) => s.showRelatedStreams);
   const showComments = useSettingsStore((s) => s.showComments);
   const [commentsOpen, setCommentsOpen] = useState(false);
+  const [commentsData, setCommentsData] = useState<CommentInfo | null>(null);
+  const [commentsError, setCommentsError] = useState(false);
+  const contentFadeRef = useRef<HTMLDivElement>(null);
 
   const { data, loading, error, refetch } = useAsync(
     () => (url ? fetchStreamInfo(serviceId, url) : Promise.resolve(null)),
     [url, serviceId]
   );
+
+  // Fetch comments once and share between preview and sheet
+  useEffect(() => {
+    if (!url || !showComments) return;
+    let cancelled = false;
+    setCommentsData(null);
+    setCommentsError(false);
+    fetchCommentsInfo(serviceId, url)
+      .then((result) => { if (!cancelled) setCommentsData(result); })
+      .catch(() => { if (!cancelled) setCommentsError(true); });
+    return () => { cancelled = true; };
+  }, [url, serviceId, showComments]);
 
   // Record watch history when stream data loads
   useEffect(() => {
@@ -89,24 +105,40 @@ export default function VideoDetailPage() {
     );
   }
 
-  if (loading) return <LoadingScreen />;
+  if (loading) {
+    // Show skeleton with pre-loaded card data instead of a blank spinner
+    if (preloadData) {
+      return <VideoDetailSkeleton preloadData={preloadData} />;
+    }
+    return (
+      <div className="flex min-h-[60dvh] items-center justify-center">
+        <div className="h-8 w-8 animate-spin rounded-full border-2 border-[var(--color-border)] border-t-[var(--color-primary)]" />
+      </div>
+    );
+  }
   if (error) return <ErrorMessage message={error} onRetry={refetch} />;
   if (!data) return null;
 
   return (
     <div className="flex flex-col bg-[#0f0f0f]">
-      <VideoPlayer info={data} />
-      <VideoMetadataYT info={data} />
-      <ActionButtonsRow info={data} url={url} onOpenComments={() => setCommentsOpen(true)} serviceId={serviceId} />
+      <VideoPlayer info={data} contentFadeRef={contentFadeRef} />
+      <div ref={contentFadeRef}>
+        <VideoMetadataYT info={data} />
+        <ActionButtonsRow info={data} url={url} onOpenComments={() => setCommentsOpen(true)} serviceId={serviceId} />
 
-      {/* Comments preview card */}
-      {showComments && (
-        <CommentsPreviewCard url={url} serviceId={serviceId} onOpenComments={() => setCommentsOpen(true)} />
-      )}
+        {/* Comments preview card */}
+        {showComments && (
+          <CommentsPreviewCard
+            commentsData={commentsData}
+            hasError={commentsError}
+            onOpenComments={() => setCommentsOpen(true)}
+          />
+        )}
 
-      {showRelated && data.relatedItems.length > 0 && (
-        <RelatedVideos info={data} />
-      )}
+        {showRelated && data.relatedItems.length > 0 && (
+          <RelatedVideos info={data} />
+        )}
+      </div>
       {/* Comments bottom sheet */}
       {showComments && (
         <BottomSheet
@@ -115,7 +147,19 @@ export default function VideoDetailPage() {
           title="Comentarios"
           maxHeightPercent={90}
         >
-          <CommentsSheetContent url={url} serviceId={serviceId} />
+          <CommentsSheetContent
+            commentsData={commentsData}
+            hasError={commentsError}
+            url={url}
+            serviceId={serviceId}
+            onRetry={() => {
+              setCommentsData(null);
+              setCommentsError(false);
+              fetchCommentsInfo(serviceId, url)
+                .then(setCommentsData)
+                .catch(() => setCommentsError(true));
+            }}
+          />
         </BottomSheet>
       )}
     </div>
@@ -181,42 +225,140 @@ function resolvePlaybackConfig(info: StreamInfo, preferredResolution: string): P
   return { mode: "none", videoUrl: null, audioUrl: null, hlsUrl: null };
 }
 
-function VideoPlayer({ info }: { readonly info: StreamInfo }) {
+interface VideoPlayerProps {
+  readonly info: StreamInfo;
+  readonly contentFadeRef: React.RefObject<HTMLDivElement | null>;
+}
+
+// ── Mini player target dimensions (must match MiniPlayer.tsx) ──
+const MINI_WIDTH = 180;
+const MINI_HEIGHT = 101;
+const MINI_EDGE_MARGIN = 8;
+const MINI_BOTTOM_OFFSET = 60;
+// Minimum drag distance (px) to commit the minimize gesture
+const SWIPE_COMMIT_PIXELS = 140;
+
+function VideoPlayer({ info, contentFadeRef }: VideoPlayerProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const audioRef = useRef<HTMLAudioElement>(null);
   const hlsRef = useRef<Hls | null>(null);
   const playerStore = usePlayerStore();
-  const navigate = useNavigate();
   const defaultResolution = useSettingsStore((s) => s.defaultResolution);
+  const isOverlayVisible = usePlayerStore((s) => s.isOverlayVisible);
   const positionSaveRef = useRef<ReturnType<typeof setInterval>>(null);
   const [activeSubtitle, setActiveSubtitle] = useState<string | null>(null);
   const [playbackSpeed, setPlaybackSpeed] = useState(1);
   const subtitleBlobUrls = useSubtitleBlobUrls(info.subtitles);
 
-  // ── Swipe-down to minimize ──
+  // ── Progressive swipe-down to minimize (morph toward mini player) ──
   const swipeStartY = useRef<number | null>(null);
-  const [swipeOffsetY, setSwipeOffsetY] = useState(0);
-  const SWIPE_THRESHOLD = 80;
+  const containerRef = useRef<HTMLDivElement>(null);
+  const swipeOffsetRef = useRef(0);
+  const rafIdRef = useRef(0);
+
+  // Cache layout dimensions once at swipe start to avoid reflows during gesture
+  const layoutRef = useRef({ vw: 0, playerW: 0, playerH: 0, fullDist: 0 });
+
+  const applyMorphFrame = useCallback(() => {
+    const container = containerRef.current;
+    const content = contentFadeRef.current;
+    if (!container) return;
+
+    const offset = swipeOffsetRef.current;
+    const { vw, playerW, playerH, fullDist } = layoutRef.current;
+    const progress = fullDist > 0 ? Math.min(1, Math.max(0, offset / fullDist)) : 0;
+
+    if (offset === 0) {
+      container.style.transform = "";
+      container.style.borderRadius = "";
+      container.style.boxShadow = "";
+      container.style.overflow = "";
+      container.style.transition = "transform 0.25s cubic-bezier(0.2, 0, 0, 1), border-radius 0.25s";
+      if (content) {
+        content.style.opacity = "";
+        content.style.transform = "";
+        content.style.transition = "opacity 0.25s, transform 0.25s";
+        content.style.pointerEvents = "";
+      }
+      return;
+    }
+
+    const targetScaleX = MINI_WIDTH / playerW;
+    const targetScaleY = MINI_HEIGHT / playerH;
+    const scaleX = 1 - progress * (1 - targetScaleX);
+    const scaleY = 1 - progress * (1 - targetScaleY);
+
+    const finalX = vw - MINI_EDGE_MARGIN - MINI_WIDTH / 2 - playerW / 2;
+    const translateX = progress * finalX;
+    const scaleCompensationY = playerH * (1 - scaleY) / 2;
+    const translateY = offset - scaleCompensationY;
+
+    const radiusProgress = Math.min(1, progress * 4);
+    const targetVisual = radiusProgress * 8;
+    const cssRadiusX = scaleX > 0 ? targetVisual / scaleX : targetVisual;
+    const cssRadiusY = scaleY > 0 ? targetVisual / scaleY : targetVisual;
+
+    const shadowOpacity = Math.min(0.6, progress * 2.4);
+    const shadowBlur = 50 * Math.min(1, progress * 3);
+    const shadowY = 25 * Math.min(1, progress * 3);
+    const shadowSpread = -12 * Math.min(1, progress * 3);
+
+    container.style.transition = "none";
+    container.style.transform = `translate(${translateX}px, ${translateY}px) scale(${scaleX}, ${scaleY})`;
+    container.style.borderRadius = `${cssRadiusX}px / ${cssRadiusY}px`;
+    container.style.overflow = "hidden";
+    container.style.boxShadow = progress > 0.02
+      ? `0 ${shadowY}px ${shadowBlur}px ${shadowSpread}px rgba(0,0,0,${shadowOpacity})`
+      : "";
+
+    if (content) {
+      content.style.transition = "none";
+      content.style.opacity = `${Math.max(0, 1 - progress * 5)}`;
+      content.style.transform = `translateY(${progress * 40}px)`;
+      content.style.pointerEvents = "none";
+    }
+  }, []);
 
   const handleSwipeStart = useCallback((e: React.TouchEvent) => {
     swipeStartY.current = e.touches[0]!.clientY;
+    // Cache layout dimensions once
+    const vw = window.innerWidth;
+    const playerW = containerRef.current?.offsetWidth ?? vw;
+    const playerH = containerRef.current?.offsetHeight ?? (vw * 9) / 16;
+    const fullDist = window.innerHeight - MINI_BOTTOM_OFFSET - MINI_HEIGHT / 2 - playerH / 2;
+    layoutRef.current = { vw, playerW, playerH, fullDist };
   }, []);
 
   const handleSwipeMove = useCallback((e: React.TouchEvent) => {
     if (swipeStartY.current === null) return;
     const deltaY = e.touches[0]!.clientY - swipeStartY.current;
     if (deltaY > 0) {
-      setSwipeOffsetY(deltaY);
+      swipeOffsetRef.current = deltaY;
+      cancelAnimationFrame(rafIdRef.current);
+      rafIdRef.current = requestAnimationFrame(applyMorphFrame);
     }
-  }, []);
+  }, [applyMorphFrame]);
 
   const handleSwipeEnd = useCallback(() => {
-    if (swipeOffsetY > SWIPE_THRESHOLD) {
-      navigate(-1); // cleanup effect will minimize
+    cancelAnimationFrame(rafIdRef.current);
+    if (swipeOffsetRef.current >= SWIPE_COMMIT_PIXELS) {
+      // Commit: minimize overlay → MiniPlayer takes over
+      if (document.startViewTransition) {
+        document.startViewTransition(() => {
+          flushSync(() => usePlayerStore.getState().minimizeOverlay());
+        });
+      } else {
+        usePlayerStore.getState().minimizeOverlay();
+      }
     }
-    setSwipeOffsetY(0);
+    swipeOffsetRef.current = 0;
     swipeStartY.current = null;
-  }, [swipeOffsetY, navigate]);
+    applyMorphFrame();
+  }, [applyMorphFrame]);
+
+  const playerContainerStyle = useMemo((): React.CSSProperties => ({
+    viewTransitionName: isOverlayVisible ? "hero-thumbnail" : undefined,
+  }), [isOverlayVisible]);
 
   const playback = useMemo(
     () => resolvePlaybackConfig(info, defaultResolution),
@@ -354,10 +496,6 @@ function VideoPlayer({ info }: { readonly info: StreamInfo }) {
 
     return () => {
       if (positionSaveRef.current) clearInterval(positionSaveRef.current);
-      // Minimize instead of stop when navigating away
-      if (usePlayerStore.getState().status !== "idle") {
-        usePlayerStore.getState().toggleMinimized();
-      }
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [info.url]);
@@ -429,6 +567,18 @@ function VideoPlayer({ info }: { readonly info: StreamInfo }) {
     }
   }, [activeSubtitle]);
 
+  // Sync store-driven play/pause to the actual video element.
+  // Allows MiniPlayer buttons to control playback when overlay is hidden.
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video) return;
+    if (playerStore.status === "playing" && video.paused) {
+      video.play().catch(() => {});
+    } else if (playerStore.status === "paused" && !video.paused) {
+      video.pause();
+    }
+  }, [playerStore.status]);
+
   const handlePlayPause = useCallback(() => {
     const video = videoRef.current;
     if (!video) return;
@@ -449,8 +599,15 @@ function VideoPlayer({ info }: { readonly info: StreamInfo }) {
   }, [playback.mode]);
 
   const handleMinimize = useCallback(() => {
-    navigate(-1);
-  }, [navigate]);
+    // Morph player → MiniPlayer via View Transitions API
+    if (document.startViewTransition) {
+      document.startViewTransition(() => {
+        flushSync(() => usePlayerStore.getState().minimizeOverlay());
+      });
+    } else {
+      usePlayerStore.getState().minimizeOverlay();
+    }
+  }, []);
 
   const handleSpeedChange = useCallback((speed: number) => {
     const video = videoRef.current;
@@ -464,13 +621,9 @@ function VideoPlayer({ info }: { readonly info: StreamInfo }) {
 
   return (
     <div
+      ref={containerRef}
       className="video-player-container relative aspect-video w-full bg-black"
-      style={{
-        transform: swipeOffsetY > 0 ? `translateY(${swipeOffsetY}px) scale(${Math.max(0.85, 1 - swipeOffsetY / 600)})` : undefined,
-        opacity: swipeOffsetY > 0 ? Math.max(0.5, 1 - swipeOffsetY / 300) : undefined,
-        transition: swipeOffsetY === 0 ? "transform 0.2s, opacity 0.2s" : "none",
-        borderRadius: swipeOffsetY > 0 ? "12px" : undefined,
-      }}
+      style={playerContainerStyle}
       onTouchStart={handleSwipeStart}
       onTouchMove={handleSwipeMove}
       onTouchEnd={handleSwipeEnd}
@@ -751,35 +904,26 @@ function ActionButtonsRow({
 
 // ─── Comments Bottom Sheet Content ───────────────────────────────────────────
 
-function CommentsSheetContent({ url, serviceId }: { readonly url: string; readonly serviceId: number }) {
+function CommentsSheetContent({ commentsData, hasError, url, serviceId, onRetry }: {
+  readonly commentsData: CommentInfo | null;
+  readonly hasError: boolean;
+  readonly url: string;
+  readonly serviceId: number;
+  readonly onRetry: () => void;
+}) {
   const [comments, setComments] = useState<readonly CommentItem[]>([]);
   const [nextPage, setNextPage] = useState<Page | null>(null);
-  const [initialLoading, setInitialLoading] = useState(true);
-  const [loadingMore, setLoadingMore] = useState(false);
   const [commentsCount, setCommentsCount] = useState<number | null>(null);
-  const [disabled, setDisabled] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [loadingMore, setLoadingMore] = useState(false);
 
-  const loadComments = useCallback(() => {
-    setInitialLoading(true);
-    setError(null);
-    fetchCommentsInfo(serviceId, url)
-      .then((data) => {
-        if (data.isCommentsDisabled) { setDisabled(true); setInitialLoading(false); return; }
-        setComments(data.items);
-        setNextPage(data.nextPage);
-        setCommentsCount(data.commentsCount);
-        setInitialLoading(false);
-      })
-      .catch((err: unknown) => {
-        setError(err instanceof Error ? err.message : "Error al cargar comentarios");
-        setInitialLoading(false);
-      });
-  }, [url, serviceId]);
-
+  // Sync from shared data when it arrives
   useEffect(() => {
-    loadComments();
-  }, [loadComments]);
+    if (commentsData) {
+      setComments(commentsData.items);
+      setNextPage(commentsData.nextPage);
+      setCommentsCount(commentsData.commentsCount);
+    }
+  }, [commentsData]);
 
   const loadMore = useCallback(async () => {
     if (!nextPage || loadingMore) return;
@@ -792,7 +936,8 @@ function CommentsSheetContent({ url, serviceId }: { readonly url: string; readon
     finally { setLoadingMore(false); }
   }, [nextPage, loadingMore, serviceId, url]);
 
-  if (initialLoading) {
+  // Loading state
+  if (!commentsData && !hasError) {
     return (
       <div className="flex justify-center py-8">
         <div className="h-6 w-6 animate-spin rounded-full border-2 border-[#aaa] border-t-transparent" />
@@ -800,17 +945,17 @@ function CommentsSheetContent({ url, serviceId }: { readonly url: string; readon
     );
   }
 
-  if (disabled) {
+  if (commentsData?.isCommentsDisabled) {
     return <p className="px-4 py-8 text-center text-sm text-[#aaa]">Comentarios desactivados</p>;
   }
 
-  if (error) {
+  if (hasError) {
     return (
       <div className="flex flex-col items-center gap-3 px-4 py-8">
-        <p className="text-sm text-[#ff4444]">{error}</p>
+        <p className="text-sm text-[#ff4444]">Error al cargar comentarios</p>
         <button
           type="button"
-          onClick={loadComments}
+          onClick={onRetry}
           className="rounded-full bg-[#272727] px-5 py-2 text-xs font-medium text-white active:bg-[#3a3a3a]"
         >
           Reintentar
@@ -1000,30 +1145,15 @@ function ShareButtonYT({ url, title }: { readonly url: string; readonly title: s
 
 // ─── Comments Preview Card ───────────────────────────────────────────────────
 
-function CommentsPreviewCard({ url, serviceId, onOpenComments }: {
-  readonly url: string;
-  readonly serviceId: number;
+function CommentsPreviewCard({ commentsData, hasError, onOpenComments }: {
+  readonly commentsData: CommentInfo | null;
+  readonly hasError: boolean;
   readonly onOpenComments: () => void;
 }) {
-  const [topComment, setTopComment] = useState<CommentItem | null>(null);
-  const [count, setCount] = useState<number | null>(null);
-  const [disabled, setDisabled] = useState(false);
-  const [hasError, setHasError] = useState(false);
+  if (commentsData?.isCommentsDisabled) return null;
 
-  useEffect(() => {
-    let cancelled = false;
-    fetchCommentsInfo(serviceId, url)
-      .then((data) => {
-        if (cancelled) return;
-        if (data.isCommentsDisabled) { setDisabled(true); return; }
-        setCount(data.commentsCount);
-        if (data.items.length > 0) setTopComment(data.items[0]!);
-      })
-      .catch(() => { if (!cancelled) setHasError(true); });
-    return () => { cancelled = true; };
-  }, [url, serviceId]);
-
-  if (disabled) return null;
+  const count = commentsData?.commentsCount ?? null;
+  const topComment = commentsData?.items[0] ?? null;
 
   return (
     <button

@@ -72,10 +72,21 @@ export default function FeedPage() {
     }
 
     try {
-      const batchItems = await fetchBatch(0);
-      setItems(deduplicateAndSort(batchItems));
-      pageRef.current = 1;
-      setHasMore(subs.length > SUBS_PER_PAGE);
+      // Fetch ALL batches in parallel for maximum speed
+      const totalBatches = Math.ceil(subs.length / SUBS_PER_PAGE);
+      const batchPromises = Array.from({ length: totalBatches }, (_, i) => fetchBatch(i));
+      const batchResults = await Promise.allSettled(batchPromises);
+
+      const allItems: StreamInfoItem[] = [];
+      for (const result of batchResults) {
+        if (result.status === "fulfilled") {
+          allItems.push(...result.value);
+        }
+      }
+
+      setItems(deduplicateAndSort(allItems));
+      pageRef.current = totalBatches;
+      setHasMore(false);
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : "Failed to load feed");
     } finally {

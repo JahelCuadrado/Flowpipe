@@ -1,5 +1,6 @@
 import { useEffect } from "react";
 import { useNavigate, useLocation } from "react-router";
+import { usePlayerStore } from "@/application/stores/playerStore";
 
 /**
  * Handles deep linking from YouTube URLs.
@@ -31,13 +32,13 @@ export function useDeepLinkHandler(): void {
         if (hostname === "youtu.be") {
           const videoId = url.pathname.slice(1);
           if (videoId) {
-            navigate(`/watch?url=${encodeURIComponent(`https://www.youtube.com/watch?v=${videoId}`)}`);
+            usePlayerStore.getState().openVideo(`https://www.youtube.com/watch?v=${videoId}`);
             return;
           }
         }
 
         if (url.pathname === "/watch") {
-          navigate(`/watch?url=${encodeURIComponent(deepLink)}`);
+          usePlayerStore.getState().openVideo(deepLink);
           return;
         }
 

@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { useNavigate } from "react-router";
-import { fetchKioskInfo, fetchKioskNextPage, fetchSearch } from "@/infrastructure/api/ApiService";
+import { fetchKioskInfo, fetchKioskNextPage, fetchSearch, fetchSearchNextPage } from "@/infrastructure/api/ApiService";
 import { useSettingsStore } from "@/application/stores/settingsStore";
 import { VideoCardGrid } from "@/presentation/components/ui/VideoCard";
 import { ErrorMessage } from "@/presentation/components/ui/ErrorMessage";
@@ -11,18 +11,18 @@ import type { StreamInfoItem, Page } from "@newpipe/shared";
 
 /**
  * Category chips with their corresponding search query for filtering.
- * "Todo" shows the default trending feed (null = no filter).
+ * The first entry (query: null) shows the default trending feed.
  */
-const CATEGORY_CHIPS: readonly { readonly label: string; readonly query: string | null }[] = [
-  { label: "Todo", query: null },
-  { label: "Videojuegos", query: "gaming" },
-  { label: "Música", query: "music" },
-  { label: "Noticias", query: "news" },
-  { label: "En directo", query: "live" },
-  { label: "Aprendizaje", query: "education tutorial" },
-  { label: "Deportes", query: "sports" },
-  { label: "Pódcasts", query: "podcast" },
-  { label: "Entretenimiento", query: "entertainment" },
+const CATEGORY_CHIPS: readonly { readonly key: string; readonly label: string; readonly query: string | null }[] = [
+  { key: "all", label: "Todo", query: null },
+  { key: "gaming", label: "Videojuegos", query: "gaming" },
+  { key: "music", label: "Música", query: "music" },
+  { key: "news", label: "Noticias", query: "news" },
+  { key: "live", label: "En directo", query: "live" },
+  { key: "education", label: "Aprendizaje", query: "education tutorial" },
+  { key: "sports", label: "Deportes", query: "sports" },
+  { key: "podcasts", label: "Pódcasts", query: "podcast" },
+  { key: "entertainment", label: "Entretenimiento", query: "entertainment" },
 ];
 
 export default function HomePage() {
@@ -64,15 +64,25 @@ export default function HomePage() {
     if (!nextPage || loadingMore) return;
     setLoadingMore(true);
     try {
-      const data = await fetchKioskNextPage(serviceId, "Trending", nextPage);
-      setItems((prev) => [...prev, ...data.items]);
-      setNextPage(data.nextPage);
+      const chip = CATEGORY_CHIPS[activeChip];
+      if (chip && chip.query) {
+        // Category search pagination
+        const result = await fetchSearchNextPage(serviceId, chip.query, nextPage, "Videos");
+        const streamItems = result.items.filter((it): it is StreamInfoItem => "streamType" in it);
+        setItems((prev) => [...prev, ...streamItems]);
+        setNextPage(result.nextPage);
+      } else {
+        // Trending kiosk pagination
+        const data = await fetchKioskNextPage(serviceId, "Trending", nextPage);
+        setItems((prev) => [...prev, ...data.items]);
+        setNextPage(data.nextPage);
+      }
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : "Failed to load more");
     } finally {
       setLoadingMore(false);
     }
-  }, [serviceId, nextPage, loadingMore]);
+  }, [serviceId, nextPage, loadingMore, activeChip]);
 
   useEffect(() => {
     loadInitial();
@@ -103,13 +113,13 @@ export default function HomePage() {
   return (
     <PullToRefresh onRefresh={handleRefresh}>
       {/* ── YouTube Header ─── */}
-      <header className="sticky top-0 z-30 flex items-center justify-between bg-[#0f0f0f] px-4 pb-2 pt-8">
+      <header className="sticky top-0 z-30 flex items-center justify-between bg-[#0f0f0f] px-4 pb-2 pt-2">
         {/* Flowpipe Logo */}
-        <div className="flex items-center gap-1.5">
-          <svg viewBox="0 0 24 24" width={24} height={24}>
-            <path d="M6 4 L19 12 L6 20 Z" fill="#ff0000" stroke="#ff0000" strokeWidth="3" strokeLinejoin="round" strokeLinecap="round" />
+        <div className="flex items-center gap-2">
+          <svg viewBox="0 0 24 24" width={32} height={32}>
+            <path d="M6 7 Q6 4, 8.5 5.5 L16.5 10.5 Q19 12, 16.5 13.5 L8.5 18.5 Q6 20, 6 17 Z" fill="#ff0000" />
           </svg>
-          <span className="text-[18px] font-bold tracking-tight text-white">Flowpipe</span>
+          <span className="text-[24px] font-bold tracking-tight text-white">Flowpipe</span>
         </div>
 
         {/* Right action */}
@@ -119,16 +129,16 @@ export default function HomePage() {
           aria-label="Search"
           onClick={() => navigate("/search")}
         >
-          <SearchIcon width={22} height={22} />
+          <SearchIcon width={26} height={26} />
         </button>
       </header>
 
       {/* ── Category chips (horizontal scroll) ─── */}
-      <div className="sticky top-[62px] z-20 overflow-x-auto bg-[#0f0f0f] px-3 py-1.5 scrollbar-none">
+      <div className="sticky top-[44px] z-20 overflow-x-auto bg-[#0f0f0f] px-3 py-1.5 scrollbar-none">
         <div className="flex gap-2">
           {CATEGORY_CHIPS.map((chip, index) => (
             <button
-              key={chip.label}
+              key={chip.key}
               type="button"
               onClick={() => setActiveChip(index)}
               className={`shrink-0 rounded-full px-3 py-1.5 text-[13px] font-medium transition-colors ${

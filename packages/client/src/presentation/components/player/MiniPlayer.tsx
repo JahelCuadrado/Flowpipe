@@ -1,6 +1,6 @@
 import { useRef, useState } from "react";
-import { useNavigate } from "react-router";
 import { createPortal } from "react-dom";
+import { flushSync } from "react-dom";
 import { usePlayerStore } from "@/application/stores/playerStore";
 import { PlayIcon, PauseIcon, CloseIcon } from "@/presentation/components/ui/Icons";
 
@@ -16,11 +16,9 @@ const SWIPE_DISMISS_THRESHOLD = 120;
  * Supports drag repositioning and swipe-down to dismiss.
  */
 export function MiniPlayer() {
-  const navigate = useNavigate();
   const status = usePlayerStore((s) => s.status);
   const url = usePlayerStore((s) => s.currentUrl);
   const title = usePlayerStore((s) => s.currentTitle);
-  const thumbnail = usePlayerStore((s) => s.currentThumbnail);
   const isMinimized = usePlayerStore((s) => s.isMinimized);
   const position = usePlayerStore((s) => s.position);
   const duration = usePlayerStore((s) => s.duration);
@@ -39,7 +37,13 @@ export function MiniPlayer() {
 
   function handleTap() {
     if (!dragging) {
-      navigate(`/watch?url=${encodeURIComponent(url!)}`);
+      if (document.startViewTransition) {
+        document.startViewTransition(() => {
+          flushSync(() => usePlayerStore.getState().showOverlay());
+        });
+      } else {
+        usePlayerStore.getState().showOverlay();
+      }
     }
   }
 
@@ -58,12 +62,15 @@ export function MiniPlayer() {
   }
 
   function handleTouchStart(event: React.TouchEvent) {
+    event.stopPropagation();
+    event.preventDefault();
     const touch = event.touches[0]!;
     touchStart.current = { x: touch.clientX, y: touch.clientY, time: Date.now() };
     setDragging(false);
   }
 
   function handleTouchMove(event: React.TouchEvent) {
+    event.stopPropagation();
     if (!touchStart.current) return;
     const touch = event.touches[0]!;
     const deltaY = touch.clientY - touchStart.current.y;
@@ -105,6 +112,7 @@ export function MiniPlayer() {
       ref={containerRef}
       className="fixed z-50 overflow-hidden rounded-lg shadow-2xl shadow-black/60"
       style={{
+        viewTransitionName: "hero-thumbnail",
         width: MINI_WIDTH,
         height: MINI_HEIGHT,
         right: EDGE_MARGIN,
@@ -115,26 +123,16 @@ export function MiniPlayer() {
       }}
       onTouchStart={handleTouchStart}
       onTouchMove={handleTouchMove}
-      onTouchEnd={handleTouchEnd}
-      onClick={handleTap}
+      onTouchEnd={(e) => { e.stopPropagation(); e.preventDefault(); handleTouchEnd(); }}
+      onClick={(e) => { e.stopPropagation(); e.preventDefault(); }}
     >
-      {/* Video thumbnail */}
-      {thumbnail && (
-        <img
-          src={thumbnail}
-          alt=""
-          className="absolute inset-0 h-full w-full object-cover"
-          draggable={false}
-        />
-      )}
-
       {/* Dark overlay with controls */}
       <div className="absolute inset-0 flex items-center justify-center bg-black/30">
         {/* Play/Pause */}
         <button
           type="button"
           onClick={handlePlayPause}
-          onTouchEnd={(e) => { e.stopPropagation(); handlePlayPause(e); }}
+          onTouchEnd={(e) => { e.stopPropagation(); e.preventDefault(); handlePlayPause(e); }}
           className="rounded-full bg-black/50 p-1.5 text-white"
           aria-label={isPlaying ? "Pause" : "Play"}
         >
@@ -145,7 +143,7 @@ export function MiniPlayer() {
         <button
           type="button"
           onClick={handleClose}
-          onTouchEnd={(e) => { e.stopPropagation(); handleClose(e); }}
+          onTouchEnd={(e) => { e.stopPropagation(); e.preventDefault(); handleClose(e); }}
           className="absolute right-1 top-1 rounded-full bg-black/60 p-0.5 text-white"
           aria-label="Close"
         >

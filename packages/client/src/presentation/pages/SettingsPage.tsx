@@ -91,7 +91,7 @@ export default function SettingsPage() {
     <div className="min-h-full bg-[#0f0f0f] pb-8">
       {/* Header */}
       <header className="sticky top-0 z-30 bg-[#0f0f0f] px-4 pb-3 pt-4">
-        <h1 className="text-[20px] font-bold text-white">Ajustes</h1>
+        <h1 className="text-[24px] font-bold text-white">Ajustes</h1>
       </header>
 
       <div className="flex flex-col gap-5 px-4">

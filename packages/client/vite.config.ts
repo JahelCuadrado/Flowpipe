@@ -5,50 +5,28 @@ import { VitePWA } from "vite-plugin-pwa";
 import { resolve } from "node:path";
 import { corsProxyPlugin } from "./vite-plugins/corsProxy";
 
+/**
+ * Capacitor serves assets locally — PWA Service Worker caching causes
+ * white-screen issues when asset hashes change between builds because
+ * the SW precaches index.html with old references. Disable SW in
+ * Capacitor builds entirely.
+ *
+ * Since the env var doesn't propagate reliably through pnpm subprocess,
+ * we also check for the presence of the android/ directory as a heuristic
+ * that this project targets Capacitor.
+ */
+import { existsSync } from "node:fs";
+const isCapacitorBuild = process.env["CAPACITOR_BUILD"] === "true"
+  || existsSync(resolve(__dirname, "android"))
+  || true; // Force disable PWA until web-only deployment is needed
+
 export default defineConfig({
   plugins: [
     react(),
     tailwindcss(),
     corsProxyPlugin(),
-    VitePWA({
-      registerType: "autoUpdate",
-      includeAssets: ["favicon.svg", "apple-touch-icon.png"],
-      manifest: {
-        name: "NewPipe Web",
-        short_name: "NewPipe",
-        description: "A privacy-first YouTube frontend",
-        theme_color: "#0F0F0F",
-        background_color: "#0F0F0F",
-        display: "standalone",
-        orientation: "portrait-primary",
-        icons: [
-          {
-            src: "pwa-192x192.png",
-            sizes: "192x192",
-            type: "image/png",
-          },
-          {
-            src: "pwa-512x512.png",
-            sizes: "512x512",
-            type: "image/png",
-            purpose: "any maskable",
-          },
-        ],
-      },
-      workbox: {
-        globPatterns: ["**/*.{js,css,html,ico,png,svg,woff2}"],
-        runtimeCaching: [
-          {
-            urlPattern: /^https:\/\/.*\.(?:png|jpg|jpeg|svg|gif|webp|avif)$/i,
-            handler: "CacheFirst",
-            options: {
-              cacheName: "images",
-              expiration: { maxEntries: 200, maxAgeSeconds: 604800 },
-            },
-          },
-        ],
-      },
-    }),
+    // VitePWA disabled — Capacitor serves assets locally and SW caching
+    // causes white-screen issues when asset hashes change between builds.
   ],
   resolve: {
     alias: {

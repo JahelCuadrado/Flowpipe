@@ -48,3 +48,4 @@ debug-*.mjs
 *.png
 !packages/**/src/**/*.png
 !packages/**/public/**/*.png
+.github

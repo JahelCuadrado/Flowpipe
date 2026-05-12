@@ -15,7 +15,7 @@ export class CacheService {
     this.cache = new NodeCache({
       stdTTL: defaultTtlSeconds,
       checkperiod: 120,
-      useClones: false,
+      useClones: true,
     });
   }
 

@@ -58,7 +58,7 @@ export default function PlaylistPage() {
   return (
     <div className="flex flex-col">
       {/* Playlist header */}
-      <div className="bg-[var(--color-surface)] px-4 py-4">
+      <div className="bg-[var(--color-surface)] px-4 pb-4 pt-4">
         <div className="flex gap-4">
           {thumbnail && (
             <div className="aspect-video w-36 shrink-0 overflow-hidden rounded-lg">

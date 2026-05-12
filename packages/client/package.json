@@ -19,6 +19,7 @@
   },
   "dependencies": {
     "@capacitor/app": "^7.0.0",
+    "@capacitor/status-bar": "^7.0.0",
     "@newpipe/extractor": "workspace:*",
     "@newpipe/shared": "workspace:*",
     "dexie": "^4.0.11",
