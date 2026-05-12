@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { useNavigate } from "react-router";
 import { database } from "@/infrastructure/database/AppDatabase";
+import { RetryImage } from "@/presentation/components/ui/RetryImage";
 import { SettingsIcon, SearchIcon } from "@/presentation/components/ui/Icons";
 import type { StreamEntity, StreamHistoryEntity } from "@/domain/entities/LocalEntities";
 
@@ -171,7 +172,7 @@ export default function YouPage() {
                     >
                       <div className="aspect-video w-full overflow-hidden rounded-lg bg-[#272727]">
                         {stream.thumbnailUrl && (
-                          <img src={stream.thumbnailUrl} alt="" className="h-full w-full object-cover" />
+                          <RetryImage src={stream.thumbnailUrl} alt="" className="h-full w-full object-cover" />
                         )}
                       </div>
                       <p className="line-clamp-2 text-[12px] font-medium leading-tight text-[#f1f1f1]">
@@ -210,7 +211,7 @@ export default function YouPage() {
                   >
                     <div className="aspect-video w-28 shrink-0 overflow-hidden rounded-lg bg-[#272727]">
                       {pl.thumbnailUrl && (
-                        <img src={pl.thumbnailUrl} alt="" className="h-full w-full object-cover" />
+                        <RetryImage src={pl.thumbnailUrl} alt="" className="h-full w-full object-cover" />
                       )}
                     </div>
                     <div className="min-w-0 flex-1">

@@ -4,6 +4,7 @@ import { database } from "@/infrastructure/database/AppDatabase";
 import { fetchChannelTabInfo, fetchChannelInfo } from "@/infrastructure/api/ApiService";
 import { PullToRefresh } from "@/presentation/components/ui/PullToRefresh";
 import { VideoCardGrid } from "@/presentation/components/ui/VideoCard";
+import { RetryImage } from "@/presentation/components/ui/RetryImage";
 import { SearchIcon } from "@/presentation/components/ui/Icons";
 import type { SubscriptionEntity } from "@/domain/entities/LocalEntities";
 import type { StreamInfoItem } from "@newpipe/shared";
@@ -279,7 +280,7 @@ export default function SubscriptionsPage() {
                     selectedChannel === sub.url ? "ring-white" : "ring-transparent"
                   }`}>
                     {sub.avatarUrl ? (
-                      <img src={sub.avatarUrl} alt="" className="h-full w-full object-cover" />
+                      <RetryImage src={sub.avatarUrl} alt="" className="h-full w-full object-cover" />
                     ) : (
                       <div className="flex h-full w-full items-center justify-center bg-[#333] text-xs font-semibold text-white">
                         {sub.name.charAt(0).toUpperCase()}

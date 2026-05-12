@@ -13,6 +13,7 @@ import { VideoCard } from "@/presentation/components/ui/VideoCard";
 import { ErrorMessage } from "@/presentation/components/ui/ErrorMessage";
 import { VideoDetailSkeleton } from "@/presentation/components/ui/VideoDetailSkeleton";
 import { VideoPlayerControls } from "@/presentation/components/player/VideoPlayerControls";
+import { RetryImage } from "@/presentation/components/ui/RetryImage";
 import type { AudioTrackOption } from "@/presentation/components/player/VideoPlayerControls";
 import { BottomSheet } from "@/presentation/components/ui/BottomSheet";
 import { ThumbUpIcon, ThumbDownIcon, ShareIcon, SaveIcon, DownloadIcon, CommentIcon } from "@/presentation/components/ui/Icons";
@@ -889,7 +890,7 @@ function VideoMetadataYT({ info }: { readonly info: StreamInfo }) {
             className="flex flex-1 items-center gap-2.5 text-left"
           >
             {info.uploaderAvatars[0]?.url ? (
-              <img
+              <RetryImage
                 src={info.uploaderAvatars[0].url}
                 alt=""
                 className="h-9 w-9 shrink-0 rounded-full object-cover"
@@ -1107,7 +1108,7 @@ function CommentCardYT({ comment, serviceId, videoUrl }: {
   return (
     <div className="flex gap-3">
       {comment.uploaderAvatars[0]?.url ? (
-        <img src={comment.uploaderAvatars[0].url} alt="" className="h-9 w-9 shrink-0 rounded-full object-cover" />
+        <RetryImage src={comment.uploaderAvatars[0].url} alt="" className="h-9 w-9 shrink-0 rounded-full object-cover" />
       ) : (
         <div className="h-9 w-9 shrink-0 rounded-full bg-[#333]" />
       )}
@@ -1150,7 +1151,7 @@ function CommentCardYT({ comment, serviceId, videoUrl }: {
             {replies.map((reply) => (
               <div key={reply.commentId} className="flex gap-2.5">
                 {reply.uploaderAvatars[0]?.url ? (
-                  <img src={reply.uploaderAvatars[0].url} alt="" className="h-7 w-7 shrink-0 rounded-full object-cover" />
+                  <RetryImage src={reply.uploaderAvatars[0].url} alt="" className="h-7 w-7 shrink-0 rounded-full object-cover" />
                 ) : (
                   <div className="h-7 w-7 shrink-0 rounded-full bg-[#333]" />
                 )}
@@ -1253,7 +1254,7 @@ function CommentsPreviewCard({ commentsData, hasError, onOpenComments }: {
       {topComment ? (
         <div className="flex items-start gap-2.5">
           {topComment.uploaderAvatars[0]?.url ? (
-            <img src={topComment.uploaderAvatars[0].url} alt="" className="h-6 w-6 shrink-0 rounded-full object-cover" />
+            <RetryImage src={topComment.uploaderAvatars[0].url} alt="" className="h-6 w-6 shrink-0 rounded-full object-cover" />
           ) : (
             <div className="h-6 w-6 shrink-0 rounded-full bg-[#333]" />
           )}

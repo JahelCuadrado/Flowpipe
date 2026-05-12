@@ -6,6 +6,7 @@ import { useAsync } from "@/application/hooks/useAsync";
 import { VideoCard } from "@/presentation/components/ui/VideoCard";
 import { ErrorMessage } from "@/presentation/components/ui/ErrorMessage";
 import { LoadingScreen } from "@/presentation/components/ui/LoadingScreen";
+import { RetryImage } from "@/presentation/components/ui/RetryImage";
 import type { StreamInfoItem, Page } from "@newpipe/shared";
 
 export default function PlaylistPage() {
@@ -62,7 +63,7 @@ export default function PlaylistPage() {
         <div className="flex gap-4">
           {thumbnail && (
             <div className="aspect-video w-36 shrink-0 overflow-hidden rounded-lg">
-              <img src={thumbnail} alt="" className="h-full w-full object-cover" />
+              <RetryImage src={thumbnail} alt="" className="h-full w-full object-cover" />
             </div>
           )}
           <div className="flex min-w-0 flex-1 flex-col gap-1">

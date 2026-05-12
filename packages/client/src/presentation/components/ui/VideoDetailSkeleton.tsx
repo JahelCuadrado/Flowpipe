@@ -1,3 +1,4 @@
+import { RetryImage } from "@/presentation/components/ui/RetryImage";
 import type { StreamInfoItem } from "@newpipe/shared";
 
 interface VideoDetailSkeletonProps {
@@ -27,7 +28,7 @@ export function VideoDetailSkeleton({ preloadData }: VideoDetailSkeletonProps) {
         style={{ viewTransitionName: "hero-thumbnail" }}
       >
         {thumbnail && (
-          <img
+          <RetryImage
             src={thumbnail}
             alt=""
             className="h-full w-full object-cover"

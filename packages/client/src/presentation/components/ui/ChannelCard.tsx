@@ -1,4 +1,5 @@
 import { useNavigate } from "react-router";
+import { RetryImage } from "@/presentation/components/ui/RetryImage";
 import type { ChannelInfoItem } from "@newpipe/shared";
 
 interface ChannelCardProps {
@@ -22,7 +23,7 @@ export function ChannelCard({ item }: ChannelCardProps) {
     >
       <div className="h-14 w-14 shrink-0 overflow-hidden rounded-full bg-[var(--color-surface)]">
         {avatar && (
-          <img src={avatar} alt="" loading="lazy" className="h-full w-full object-cover" />
+          <RetryImage src={avatar} alt="" loading="lazy" className="h-full w-full object-cover" />
         )}
       </div>
       <div className="min-w-0 flex-1">

@@ -7,6 +7,7 @@ import { useAsync } from "@/application/hooks/useAsync";
 import { VideoCard } from "@/presentation/components/ui/VideoCard";
 import { ErrorMessage } from "@/presentation/components/ui/ErrorMessage";
 import { LoadingScreen } from "@/presentation/components/ui/LoadingScreen";
+import { RetryImage } from "@/presentation/components/ui/RetryImage";
 import { SearchIcon } from "@/presentation/components/ui/Icons";
 import type { StreamInfoItem, Page } from "@newpipe/shared";
 
@@ -114,14 +115,14 @@ export default function ChannelPage() {
 
       {/* ── Banner ─── */}
       {banner ? (
-        <div className="w-full overflow-hidden bg-[#181818]" style={{ aspectRatio: '6 / 1' }}>
-          <img
+        <div id="channel-banner" className="w-full overflow-hidden bg-[#181818]" style={{ aspectRatio: '6 / 1' }}>
+          <RetryImage
             src={banner}
             alt=""
             className="h-full w-full object-cover"
-            onError={(e) => {
-              console.error('[ChannelPage] Banner failed to load:', banner);
-              (e.currentTarget.parentElement as HTMLElement).style.display = 'none';
+            onAllRetriesFailed={() => {
+              const el = document.getElementById('channel-banner');
+              if (el) el.style.display = 'none';
             }}
           />
         </div>
@@ -133,7 +134,7 @@ export default function ChannelPage() {
       <div className="flex items-start gap-3 px-4 py-4">
         {/* Avatar */}
         {avatar && (
-          <img src={avatar} alt="" className="h-[72px] w-[72px] shrink-0 rounded-full object-cover" />
+          <RetryImage src={avatar} alt="" className="h-[72px] w-[72px] shrink-0 rounded-full object-cover" />
         )}
 
         {/* Name + subs + subscribe button */}

@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { useNavigate } from "react-router";
 import { database } from "@/infrastructure/database/AppDatabase";
+import { RetryImage } from "@/presentation/components/ui/RetryImage";
 import type { StreamEntity } from "@/domain/entities/LocalEntities";
 
 /**
@@ -58,7 +59,7 @@ export default function DownloadsPage() {
             >
               <div className="aspect-video w-28 shrink-0 overflow-hidden rounded-lg bg-[var(--color-surface)]">
                 {stream.thumbnailUrl && (
-                  <img src={stream.thumbnailUrl} alt="" className="h-full w-full object-cover" />
+                  <RetryImage src={stream.thumbnailUrl} alt="" className="h-full w-full object-cover" />
                 )}
               </div>
               <div className="min-w-0 flex-1">

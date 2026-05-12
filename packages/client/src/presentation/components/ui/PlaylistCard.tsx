@@ -1,4 +1,5 @@
 import { useNavigate } from "react-router";
+import { RetryImage } from "@/presentation/components/ui/RetryImage";
 import type { PlaylistInfoItem } from "@newpipe/shared";
 
 interface PlaylistCardProps {
@@ -22,7 +23,7 @@ export function PlaylistCard({ item }: PlaylistCardProps) {
     >
       <div className="relative aspect-video w-40 shrink-0 overflow-hidden rounded-lg bg-[var(--color-surface)]">
         {thumbnail && (
-          <img src={thumbnail} alt="" loading="lazy" className="h-full w-full object-cover" />
+          <RetryImage src={thumbnail} alt="" loading="lazy" className="h-full w-full object-cover" />
         )}
         {item.streamCount !== null && item.streamCount >= 0 && (
           <span className="absolute bottom-1 right-1 rounded bg-black/80 px-1.5 py-0.5 text-[10px] font-medium text-white">

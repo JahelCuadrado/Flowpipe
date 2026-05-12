@@ -1,6 +1,7 @@
 import { useRef } from "react";
 import { useNavigate } from "react-router";
 import { MoreVertIcon } from "@/presentation/components/ui/Icons";
+import { RetryImage } from "@/presentation/components/ui/RetryImage";
 import { useVideoNavigation, getReverseTransitionUrl, clearReverseTransitionUrl } from "@/presentation/hooks/useVideoNavigation";
 import type { StreamInfoItem } from "@newpipe/shared";
 
@@ -42,7 +43,7 @@ export function VideoCard({ item }: VideoCardProps) {
         className="relative aspect-video w-[168px] shrink-0 overflow-hidden rounded-lg bg-[#1a1a1a]"
       >
         {thumbnail && (
-          <img src={thumbnail} alt="" loading="lazy" className="h-full w-full object-cover" />
+          <RetryImage src={thumbnail} alt="" loading="lazy" className="h-full w-full object-cover" />
         )}
         {item.duration > 0 && (
           <span className="absolute bottom-1 right-1 rounded-[4px] bg-black/80 px-1 py-[1px] text-[11px] font-medium leading-tight text-white">
@@ -135,7 +136,7 @@ export function VideoCardGrid({ item }: VideoCardProps) {
         className="relative mx-3 mt-1 aspect-video w-[calc(100%-24px)] overflow-hidden rounded-lg bg-[#1a1a1a]"
       >
         {thumbnail && (
-          <img src={thumbnail} alt="" loading="lazy" className="h-full w-full object-cover" />
+          <RetryImage src={thumbnail} alt="" loading="lazy" className="h-full w-full object-cover" />
         )}
         {item.duration > 0 && (
           <span className="absolute bottom-2 right-2 rounded-[4px] bg-black/80 px-1 py-[1px] text-[12px] font-medium leading-tight text-white">
@@ -157,7 +158,7 @@ export function VideoCardGrid({ item }: VideoCardProps) {
           onClick={handleChannelClick}
         >
           {avatar && (
-            <img src={avatar} alt="" loading="lazy" className="h-full w-full object-cover" />
+            <RetryImage src={avatar} alt="" loading="lazy" className="h-full w-full object-cover" />
           )}
         </div>
 
