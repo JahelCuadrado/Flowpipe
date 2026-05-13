@@ -1,12 +1,12 @@
 import { useState, useRef, useCallback, useEffect } from "react";
 import { createPortal } from "react-dom";
+import { ScreenOrientation } from "@capacitor/screen-orientation";
+import { ImmersiveMode } from "@/infrastructure/native/ImmersiveMode";
 import {
   PlayIcon,
   PauseIcon,
   FullscreenIcon,
   FullscreenExitIcon,
-  Forward10Icon,
-  Replay10Icon,
   SubtitlesIcon,
   ChevronDownIcon,
 } from "@/presentation/components/ui/Icons";
@@ -48,6 +48,9 @@ interface VideoPlayerControlsProps {
 }
 
 const HIDE_DELAY_MS = 3000;
+const DOUBLE_TAP_MS = 300;
+const SEEK_STEP = 10;
+const GESTURE_THRESHOLD = 15;
 const SPEEDS = [0.25, 0.5, 0.75, 1, 1.25, 1.5, 1.75, 2] as const;
 
 /**
@@ -92,6 +95,19 @@ export function VideoPlayerControls({
   const seekBarRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
 
+  // Double-tap seek
+  const [seekAnim, setSeekAnim] = useState<{ side: "left" | "right"; amount: number; key: number } | null>(null);
+  const lastTapTimeRef = useRef(0);
+  const lastTapSideRef = useRef<"left" | "right">("left");
+  const seekAccRef = useRef({ amount: 0, timer: null as ReturnType<typeof setTimeout> | null });
+  const seekAnimKeyRef = useRef(0);
+
+  // Volume/brightness gestures (fullscreen only)
+  const [gestureIndicator, setGestureIndicator] = useState<{ type: "volume" | "brightness"; value: number } | null>(null);
+  const brightnessRef = useRef(1);
+  const gestureStateRef = useRef<{ startY: number; type: "volume" | "brightness" | "none"; startValue: number } | null>(null);
+  const wasGestureRef = useRef(false);
+
   // Auto-hide controls
   const resetHideTimer = useCallback(() => {
     if (hideTimerRef.current) clearTimeout(hideTimerRef.current);
@@ -125,10 +141,11 @@ export function VideoPlayerControls({
       const isNowFullscreen = !!document.fullscreenElement;
       setIsFullscreen(isNowFullscreen);
       if (!isNowFullscreen) {
-        const orientation = screen.orientation as ScreenOrientation & { unlock?: () => void };
-        if (orientation.unlock) {
-          orientation.unlock();
-        }
+        ScreenOrientation.unlock().catch(() => {});
+        ImmersiveMode.disable().catch(() => {});
+        // Reset brightness filter when leaving fullscreen
+        brightnessRef.current = 1;
+        if (videoRef.current) videoRef.current.style.filter = "";
       }
     }
     document.addEventListener("fullscreenchange", handleFullscreenChange);
@@ -136,13 +153,50 @@ export function VideoPlayerControls({
   }, []);
 
   function handleContainerTap(event: React.MouseEvent) {
-    // Don't toggle if tapping on a control button
     if ((event.target as HTMLElement).closest("button, [role=slider]")) return;
-    if (showSettings) {
-      setShowSettings(false);
-      return;
+    if (showSettings) { setShowSettings(false); return; }
+    if (wasGestureRef.current) { wasGestureRef.current = false; return; }
+
+    const now = Date.now();
+    const rect = containerRef.current?.getBoundingClientRect();
+    const x = event.clientX - (rect?.left ?? 0);
+    const containerWidth = rect?.width ?? window.innerWidth;
+    const side: "left" | "right" = x < containerWidth / 2 ? "left" : "right";
+
+    // Dead zone in the center 30% — only single-tap there
+    const centerStart = containerWidth * 0.35;
+    const centerEnd = containerWidth * 0.65;
+    const isCenter = x >= centerStart && x <= centerEnd;
+
+    const isDoubleTap = now - lastTapTimeRef.current < DOUBLE_TAP_MS
+      && side === lastTapSideRef.current
+      && !isCenter;
+    lastTapTimeRef.current = now;
+    lastTapSideRef.current = side;
+
+    if (isDoubleTap) {
+      const seekDelta = side === "right" ? SEEK_STEP : -SEEK_STEP;
+      onSeek(Math.max(0, Math.min(duration, currentTime + seekDelta)));
+
+      if (seekAccRef.current.timer) clearTimeout(seekAccRef.current.timer);
+      seekAccRef.current.amount += SEEK_STEP;
+      seekAnimKeyRef.current += 1;
+      setSeekAnim({ side, amount: seekAccRef.current.amount, key: seekAnimKeyRef.current });
+      seekAccRef.current.timer = setTimeout(() => {
+        setSeekAnim(null);
+        seekAccRef.current.amount = 0;
+      }, 600);
+
+      setVisible(true);
+      resetHideTimer();
+    } else {
+      setVisible((prev) => !prev);
+      if (seekAccRef.current.timer) {
+        clearTimeout(seekAccRef.current.timer);
+        seekAccRef.current.amount = 0;
+        setSeekAnim(null);
+      }
     }
-    setVisible((prev) => !prev);
   }
 
   function handleSeekStart(event: React.TouchEvent | React.MouseEvent) {
@@ -172,16 +226,71 @@ export function VideoPlayerControls({
     setSeekPosition(ratio * duration);
   }
 
-  function handleForward() {
-    const newTime = Math.min(duration, currentTime + 10);
-    onSeek(newTime);
-    resetHideTimer();
+  // ── Volume / Brightness gesture handlers (fullscreen only) ──
+
+  function handleGestureStart(event: React.TouchEvent) {
+    if (isFullscreen) event.stopPropagation();
+    if ((event.target as HTMLElement).closest("button, [role=slider]")) return;
+    if (!isFullscreen) return;
+
+    const touch = event.touches[0]!;
+    const rect = containerRef.current?.getBoundingClientRect();
+    const x = touch.clientX - (rect?.left ?? 0);
+    const containerWidth = rect?.width ?? window.innerWidth;
+    const side = x < containerWidth / 2 ? "brightness" : "volume";
+
+    gestureStateRef.current = {
+      startY: touch.clientY,
+      type: "none",
+      startValue: side === "volume"
+        ? (videoRef.current?.volume ?? 1)
+        : brightnessRef.current,
+    };
   }
 
-  function handleRewind() {
-    const newTime = Math.max(0, currentTime - 10);
-    onSeek(newTime);
-    resetHideTimer();
+  function handleGestureMove(event: React.TouchEvent) {
+    if (isFullscreen) event.stopPropagation();
+    if (!gestureStateRef.current || !isFullscreen) return;
+    if ((event.target as HTMLElement).closest("[role=slider]")) return;
+
+    const touch = event.touches[0]!;
+    const deltaY = gestureStateRef.current.startY - touch.clientY;
+
+    if (gestureStateRef.current.type === "none") {
+      if (Math.abs(deltaY) < GESTURE_THRESHOLD) return;
+      const rect = containerRef.current?.getBoundingClientRect();
+      const x = touch.clientX - (rect?.left ?? 0);
+      const containerWidth = rect?.width ?? window.innerWidth;
+      gestureStateRef.current.type = x < containerWidth / 2 ? "brightness" : "volume";
+      gestureStateRef.current.startValue = gestureStateRef.current.type === "volume"
+        ? (videoRef.current?.volume ?? 1)
+        : brightnessRef.current;
+      gestureStateRef.current.startY = touch.clientY;
+      return;
+    }
+
+    wasGestureRef.current = true;
+    const containerHeight = containerRef.current?.clientHeight ?? window.innerHeight;
+    const delta = deltaY / containerHeight;
+    const newValue = Math.max(0, Math.min(1, gestureStateRef.current.startValue + delta));
+
+    if (gestureStateRef.current.type === "volume") {
+      if (videoRef.current) videoRef.current.volume = newValue;
+      setGestureIndicator({ type: "volume", value: newValue });
+    } else {
+      const brightness = Math.max(0.05, newValue);
+      brightnessRef.current = brightness;
+      if (videoRef.current) videoRef.current.style.filter = `brightness(${brightness})`;
+      setGestureIndicator({ type: "brightness", value: brightness });
+    }
+  }
+
+  function handleGestureEnd() {
+    if (gestureStateRef.current?.type !== "none" && gestureStateRef.current?.type !== undefined) {
+      wasGestureRef.current = true;
+    }
+    gestureStateRef.current = null;
+    setGestureIndicator(null);
   }
 
   async function handleFullscreen() {
@@ -192,12 +301,9 @@ export function VideoPlayerControls({
       if (document.fullscreenElement) {
         await document.exitFullscreen();
       } else {
+        await ImmersiveMode.enable().catch(() => {});
         await container.requestFullscreen();
-        // Lock to landscape on mobile
-        const orientation = screen.orientation as ScreenOrientation & { lock?: (o: string) => Promise<void> };
-        if (orientation.lock) {
-          orientation.lock("landscape").catch(() => {});
-        }
+        await ScreenOrientation.lock({ orientation: "landscape" }).catch(() => {});
       }
     } catch {
       // Fullscreen not supported
@@ -213,6 +319,10 @@ export function VideoPlayerControls({
       ref={containerRef}
       className="absolute inset-0 z-10"
       onClick={handleContainerTap}
+      onTouchStart={handleGestureStart}
+      onTouchMove={handleGestureMove}
+      onTouchEnd={handleGestureEnd}
+      onTouchCancel={handleGestureEnd}
       role="presentation"
     >
       {/* Buffering spinner — always visible independently of controls */}
@@ -269,17 +379,7 @@ export function VideoPlayerControls({
         </div>
 
         {/* ── Center controls ── */}
-        <div className="flex items-center justify-center gap-12">
-          {/* Rewind 10s */}
-          <button
-            type="button"
-            onClick={handleRewind}
-            className="rounded-full p-2 text-white/90 active:bg-white/20"
-            aria-label="Rewind 10 seconds"
-          >
-            <Replay10Icon width={36} height={36} />
-          </button>
-
+        <div className="flex items-center justify-center">
           {/* Play/Pause */}
           {isBuffering ? (
             <div className="flex h-14 w-14 items-center justify-center">
@@ -302,16 +402,6 @@ export function VideoPlayerControls({
               )}
             </button>
           )}
-
-          {/* Forward 10s */}
-          <button
-            type="button"
-            onClick={handleForward}
-            className="rounded-full p-2 text-white/90 active:bg-white/20"
-            aria-label="Forward 10 seconds"
-          >
-            <Forward10Icon width={36} height={36} />
-          </button>
         </div>
 
         {/* ── Bottom bar: seek bar + time + fullscreen ── */}
@@ -397,6 +487,54 @@ export function VideoPlayerControls({
           </div>
         </div>
       </div>
+
+      {/* ── Double-tap seek animation ── */}
+      {seekAnim && (
+        <div
+          key={seekAnim.key}
+          className={`pointer-events-none absolute top-0 bottom-0 flex items-center animate-seek-fade ${
+            seekAnim.side === "right"
+              ? "right-0 w-2/5 justify-center rounded-l-full"
+              : "left-0 w-2/5 justify-center rounded-r-full"
+          } bg-white/10`}
+        >
+          <div className="flex flex-col items-center gap-1">
+            <svg viewBox="0 0 24 24" width={32} height={32} fill="white">
+              {seekAnim.side === "right"
+                ? <path d="M4 18l8.5-6L4 6v12zm9-12v12l8.5-6L13 6z" />
+                : <path d="M11 18V6l-8.5 6 8.5 6zm.5-6l8.5 6V6l-8.5 6z" />
+              }
+            </svg>
+            <span className="text-sm font-bold text-white drop-shadow">{seekAnim.amount} seconds</span>
+          </div>
+        </div>
+      )}
+
+      {/* ── Volume / Brightness gesture indicator ── */}
+      {gestureIndicator && (
+        <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
+          <div className="flex items-center gap-3 rounded-xl bg-black/70 px-5 py-3 backdrop-blur-sm">
+            {gestureIndicator.type === "volume" ? (
+              <svg viewBox="0 0 24 24" width={24} height={24} fill="white">
+                <path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02z" />
+              </svg>
+            ) : (
+              <svg viewBox="0 0 24 24" width={24} height={24} fill="white">
+                <path d="M20 8.69V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12 20 8.69zM12 18c-3.31 0-6-2.69-6-6s2.69-6 6-6 6 2.69 6 6-2.69 6-6 6zm0-10c-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4-1.79-4-4-4z" />
+              </svg>
+            )}
+            <div className="h-1.5 w-24 overflow-hidden rounded-full bg-white/30">
+              <div
+                className="h-full rounded-full bg-white transition-[width] duration-75"
+                style={{ width: `${gestureIndicator.value * 100}%` }}
+              />
+            </div>
+            <span className="min-w-[3ch] text-right text-xs font-semibold text-white">
+              {Math.round(gestureIndicator.value * 100)}%
+            </span>
+          </div>
+        </div>
+      )}
 
       {/* ── Settings bottom sheet (YouTube-style) — rendered via portal ── */}
       {showSettings && createPortal(
