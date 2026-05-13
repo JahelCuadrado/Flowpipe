@@ -110,6 +110,7 @@ export function MiniPlayer() {
   const miniPlayer = (
     <div
       ref={containerRef}
+      data-morph-hero="true"
       className="fixed z-50 overflow-hidden rounded-lg shadow-2xl shadow-black/60"
       style={{
         viewTransitionName: "hero-thumbnail",

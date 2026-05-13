@@ -40,7 +40,15 @@ export function useVideoNavigation() {
       return;
     }
 
-    // Assign the transition name to the clicked thumbnail only
+    // Remove the transition name from any other element (e.g. MiniPlayer)
+    // to avoid duplicate viewTransitionName which breaks the API silently.
+    const existing = document.querySelector<HTMLElement>("[data-morph-hero]");
+    if (existing && existing !== thumbnailElement) {
+      existing.style.viewTransitionName = "";
+    }
+
+    // Promote to compositor layer before capturing snapshot
+    thumbnailElement.style.willChange = "view-transition-name";
     thumbnailElement.style.viewTransitionName = "hero-thumbnail";
 
     const transition = document.startViewTransition(() => {
@@ -49,8 +57,10 @@ export function useVideoNavigation() {
       });
     });
 
-    transition.finished.then(() => {
+    // Use .finally() to ensure cleanup even if the transition is skipped/cancelled
+    transition.finished.finally(() => {
       thumbnailElement.style.viewTransitionName = "";
+      thumbnailElement.style.willChange = "";
     });
   };
 }
