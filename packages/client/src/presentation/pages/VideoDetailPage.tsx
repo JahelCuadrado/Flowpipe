@@ -295,6 +295,8 @@ function VideoPlayer({ info, contentFadeRef }: VideoPlayerProps) {
   const resolvedAudioLocale = activeAudioLocale ?? defaultAudioLocale;
 
   // ── Progressive swipe-down to minimize (spring physics, YouTube-style) ──
+  // All touch handling uses NATIVE event listeners (not React synthetic events)
+  // to eliminate React's event delegation overhead on the hot path.
   const swipeStartY = useRef<number | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const swipeOffsetRef = useRef(0);
@@ -306,6 +308,9 @@ function VideoPlayer({ info, contentFadeRef }: VideoPlayerProps) {
   // Cache layout dimensions once at swipe start to avoid reflows during gesture
   const layoutRef = useRef({ vw: 0, playerW: 0, playerH: 0, fullDist: 0 });
 
+  // Pre-computed final transform values (calculated once at swipe start)
+  const finalValuesRef = useRef({ finalX: 0, targetScale: 0 });
+
   // Spring animation state
   const springRef = useRef<{ active: boolean; position: number; velocity: number }>({
     active: false, position: 0, velocity: 0,
@@ -313,60 +318,61 @@ function VideoPlayer({ info, contentFadeRef }: VideoPlayerProps) {
 
   /**
    * Compute the current visual state given a progress value (0 = full, 1 = mini).
-   * Applies transform to container and fade to content. GPU-only properties only.
+   * ONLY writes transform to the container. Content fade is handled as threshold.
+   * Zero string allocations beyond the template literal for transform.
    */
   const applyProgress = useCallback((progress: number) => {
     const container = containerRef.current;
-    const content = contentFadeRef.current;
     if (!container) return;
 
-    const { vw, playerW } = layoutRef.current;
-    const clampedProgress = Math.min(1, Math.max(0, progress));
+    const clampedProgress = progress < 0 ? 0 : progress > 1 ? 1 : progress;
+    const { finalX, targetScale } = finalValuesRef.current;
+    const { fullDist } = layoutRef.current;
 
-    // Uniform scale from full-size down to mini-player width ratio
-    const targetScale = MINI_WIDTH / playerW;
+    // Single composite transform — GPU-only (translate3d + scale)
     const scale = 1 - clampedProgress * (1 - targetScale);
-
-    // Horizontal: move center to mini-player X position
-    const finalX = vw - MINI_EDGE_MARGIN - MINI_WIDTH / 2 - playerW / 2;
     const translateX = clampedProgress * finalX;
+    const translateY = clampedProgress * fullDist;
 
-    // Vertical: move center to mini-player Y position
-    // fullDist already represents the distance between player center and mini center
-    const translateY = clampedProgress * layoutRef.current.fullDist;
+    container.style.transform = `translate3d(${translateX}px,${translateY}px,0)scale(${scale})`;
 
-    container.style.transition = "none";
-    container.style.transform = `translate3d(${translateX}px, ${translateY}px, 0) scale(${scale})`;
+    // Content fade as threshold (one write when crossing boundary, not per-frame)
+    const content = contentFadeRef.current;
+    if (content) {
+      const opacity = 1 - clampedProgress * 4;
+      content.style.opacity = opacity < 0 ? "0" : opacity > 1 ? "1" : `${opacity}`;
+    }
+  }, []);
 
-    // border-radius as discrete step (avoids per-frame paint recalc)
-    if (clampedProgress > 0.03 && !container.dataset.morphActive) {
-      container.dataset.morphActive = "1";
-      container.style.borderRadius = "12px";
-      container.style.boxShadow = "0 25px 50px -12px rgba(0,0,0,0.6)";
-    } else if (clampedProgress <= 0.03 && container.dataset.morphActive) {
-      delete container.dataset.morphActive;
+  /**
+   * Clean up all inline gesture styles from container and content.
+   */
+  const cleanupGestureStyles = useCallback((commitMinimize: boolean) => {
+    const container = containerRef.current;
+    const content = contentFadeRef.current;
+    if (container) {
+      container.style.transform = "";
+      container.style.willChange = "";
       container.style.borderRadius = "";
       container.style.boxShadow = "";
+      if (commitMinimize) {
+        container.style.viewTransitionName = "none";
+      }
     }
-
     if (content) {
-      content.style.transition = "none";
-      content.style.opacity = `${Math.max(0, 1 - clampedProgress * 4)}`;
-      content.style.transform = `translateY(${clampedProgress * 40}px)`;
-      content.style.pointerEvents = clampedProgress > 0.01 ? "none" : "";
+      content.style.opacity = "";
+      content.style.willChange = "";
+      content.style.pointerEvents = "";
     }
   }, []);
 
   /**
    * Spring animation loop (rAF-driven).
    * Simulates a critically-damped spring to animate to target (0 or 1).
-   * Uses the release velocity for natural momentum continuation.
    */
   const animateSpring = useCallback((target: number) => {
-    // Spring constants (tuned for YouTube-like feel)
-    // Stiffness: how fast it converges. Damping: overdamped = no bounce.
-    const STIFFNESS = 600; // Higher = faster animation
-    const DAMPING = 50;    // Critical damping ≈ 2 * sqrt(stiffness) ≈ 49
+    const STIFFNESS = 600;
+    const DAMPING = 50;
 
     const spring = springRef.current;
     let lastTime = performance.now();
@@ -374,10 +380,9 @@ function VideoPlayer({ info, contentFadeRef }: VideoPlayerProps) {
     const step = (now: number) => {
       if (!spring.active) return;
 
-      const dt = Math.min((now - lastTime) / 1000, 0.032); // Cap at ~30fps minimum
+      const dt = Math.min((now - lastTime) / 1000, 0.032);
       lastTime = now;
 
-      // Spring force: F = -stiffness * (position - target) - damping * velocity
       const displacement = spring.position - target;
       const springForce = -STIFFNESS * displacement;
       const dampingForce = -DAMPING * spring.velocity;
@@ -386,7 +391,6 @@ function VideoPlayer({ info, contentFadeRef }: VideoPlayerProps) {
       spring.velocity += acceleration * dt;
       spring.position += spring.velocity * dt;
 
-      // Check if settled (close enough to target with negligible velocity)
       const isSettled = Math.abs(spring.position - target) < 0.001
         && Math.abs(spring.velocity) < 0.1;
 
@@ -394,43 +398,9 @@ function VideoPlayer({ info, contentFadeRef }: VideoPlayerProps) {
         spring.active = false;
         spring.position = target;
         spring.velocity = 0;
-
+        cleanupGestureStyles(target >= 1);
         if (target >= 1) {
-          // Commit minimize: clean up styles and switch to MiniPlayer
-          const container = containerRef.current;
-          const content = contentFadeRef.current;
-          if (container) {
-            container.style.transition = "none";
-            container.style.transform = "";
-            container.style.borderRadius = "";
-            container.style.boxShadow = "";
-            container.style.viewTransitionName = "none";
-            delete container.dataset.morphActive;
-          }
-          if (content) {
-            content.style.transition = "none";
-            content.style.opacity = "";
-            content.style.transform = "";
-            content.style.pointerEvents = "";
-          }
           usePlayerStore.getState().minimizeOverlay();
-        } else {
-          // Snap back to full: clean up all inline styles
-          const container = containerRef.current;
-          const content = contentFadeRef.current;
-          if (container) {
-            container.style.transition = "none";
-            container.style.transform = "";
-            container.style.borderRadius = "";
-            container.style.boxShadow = "";
-            delete container.dataset.morphActive;
-          }
-          if (content) {
-            content.style.transition = "none";
-            content.style.opacity = "";
-            content.style.transform = "";
-            content.style.pointerEvents = "";
-          }
         }
         return;
       }
@@ -441,7 +411,7 @@ function VideoPlayer({ info, contentFadeRef }: VideoPlayerProps) {
 
     spring.active = true;
     rafIdRef.current = requestAnimationFrame(step);
-  }, [applyProgress]);
+  }, [applyProgress, cleanupGestureStyles]);
 
   /**
    * Compute release velocity in progress-units/second from the velocity tracker.
@@ -450,7 +420,6 @@ function VideoPlayer({ info, contentFadeRef }: VideoPlayerProps) {
     const points = velocityTrackerRef.current;
     if (points.length < 2) return 0;
 
-    // Use last ~80ms of touch data for velocity estimation
     const now = points[points.length - 1]!.time;
     const cutoff = now - 80;
     const recent = points.filter((p) => p.time >= cutoff);
@@ -458,104 +427,140 @@ function VideoPlayer({ info, contentFadeRef }: VideoPlayerProps) {
 
     const first = recent[0]!;
     const last = recent[recent.length - 1]!;
-    const dt = (last.time - first.time) / 1000; // seconds
+    const dt = (last.time - first.time) / 1000;
     if (dt === 0) return 0;
 
-    const dy = last.y - first.y; // pixels
+    const dy = last.y - first.y;
     const fullDist = layoutRef.current.fullDist;
     if (fullDist === 0) return 0;
 
-    // Convert px/s to progress-units/s
     return (dy / fullDist) / dt;
   }, []);
 
-  const handleSwipeStart = useCallback((e: React.TouchEvent) => {
-    // Cancel any running spring animation
-    springRef.current.active = false;
-    cancelAnimationFrame(rafIdRef.current);
+  // ── Native touch event listeners (bypass React synthetic event overhead) ──
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
 
-    const touchY = e.touches[0]!.clientY;
-    swipeStartY.current = touchY;
-    swipeOffsetRef.current = 0;
+    const onTouchStart = (e: TouchEvent) => {
+      // Cancel any running spring animation
+      springRef.current.active = false;
+      cancelAnimationFrame(rafIdRef.current);
 
-    // Reset velocity tracker
-    velocityTrackerRef.current = [{ time: performance.now(), y: touchY }];
+      const touchY = e.touches[0]!.clientY;
+      swipeStartY.current = touchY;
+      swipeOffsetRef.current = 0;
 
-    // Cache layout dimensions once (avoid reflows during gesture)
-    const vw = window.innerWidth;
-    const playerW = containerRef.current?.offsetWidth ?? vw;
-    const playerH = containerRef.current?.offsetHeight ?? (vw * 9) / 16;
-    const fullDist = window.innerHeight - MINI_BOTTOM_OFFSET - MINI_HEIGHT / 2 - playerH / 2;
-    layoutRef.current = { vw, playerW, playerH, fullDist };
+      // Reset velocity tracker
+      velocityTrackerRef.current = [{ time: performance.now(), y: touchY }];
 
-    // Start a persistent render loop that reads the latest position ref
-    // and applies exactly ONE DOM write per display frame.
-    // This decouples input rate (touchmove can fire 2-4x per frame on Android)
-    // from render rate (locked to vsync), eliminating frame drops.
-    let lastApplied = -1;
-    const gestureLoop = () => {
-      if (swipeStartY.current === null) return; // gesture ended
-      const current = swipeOffsetRef.current;
-      if (current !== lastApplied) {
-        applyProgress(current);
-        lastApplied = current;
+      // Cache layout dimensions once (avoid reflows during gesture)
+      const vw = window.innerWidth;
+      const playerW = container.offsetWidth || vw;
+      const playerH = container.offsetHeight || (vw * 9) / 16;
+      const fullDist = window.innerHeight - MINI_BOTTOM_OFFSET - MINI_HEIGHT / 2 - playerH / 2;
+      layoutRef.current = { vw, playerW, playerH, fullDist };
+
+      // Pre-compute final values to avoid per-frame math
+      finalValuesRef.current = {
+        finalX: vw - MINI_EDGE_MARGIN - MINI_WIDTH / 2 - playerW / 2,
+        targetScale: MINI_WIDTH / playerW,
+      };
+
+      // Promote layers before first frame (will-change hint)
+      container.style.willChange = "transform";
+      const content = contentFadeRef.current;
+      if (content) {
+        content.style.willChange = "opacity";
+        content.style.pointerEvents = "none";
       }
+
+      // Style prep: disable transitions during gesture
+      container.style.borderRadius = "12px";
+      container.style.boxShadow = "0 25px 50px -12px rgba(0,0,0,0.6)";
+
+      // Persistent render loop: one DOM write per vsync, reads from ref
+      let lastApplied = -1;
+      const gestureLoop = () => {
+        if (swipeStartY.current === null) return;
+        const current = swipeOffsetRef.current;
+        if (current !== lastApplied) {
+          applyProgress(current);
+          lastApplied = current;
+        }
+        rafIdRef.current = requestAnimationFrame(gestureLoop);
+      };
       rafIdRef.current = requestAnimationFrame(gestureLoop);
     };
-    rafIdRef.current = requestAnimationFrame(gestureLoop);
-  }, [applyProgress]);
 
-  const handleSwipeMove = useCallback((e: React.TouchEvent) => {
-    if (swipeStartY.current === null) return;
-    const touchY = e.touches[0]!.clientY;
-    const deltaY = touchY - swipeStartY.current;
+    const onTouchMove = (e: TouchEvent) => {
+      if (swipeStartY.current === null) return;
+      const touchY = e.touches[0]!.clientY;
+      const deltaY = touchY - swipeStartY.current;
 
-    // Track velocity (keep last 10 samples)
-    const tracker = velocityTrackerRef.current;
-    tracker.push({ time: performance.now(), y: touchY });
-    if (tracker.length > 10) tracker.shift();
+      // Track velocity (keep last 10 samples)
+      const tracker = velocityTrackerRef.current;
+      tracker.push({ time: performance.now(), y: touchY });
+      if (tracker.length > 10) tracker.shift();
 
-    // ONLY update the ref — zero DOM work here.
-    // The persistent render loop (started in handleSwipeStart) will pick up
-    // the latest value on the next animation frame.
-    const { fullDist } = layoutRef.current;
-    const progress = deltaY > 0 && fullDist > 0 ? deltaY / fullDist : 0;
-    swipeOffsetRef.current = progress;
-  }, []);
-
-  const handleSwipeEnd = useCallback(() => {
-    if (swipeStartY.current === null) return;
-    cancelAnimationFrame(rafIdRef.current);
-
-    const currentProgress = swipeOffsetRef.current;
-    const releaseVelocity = computeReleaseVelocity(); // progress-units/s
-
-    // Determine target: minimize (1) or snap back (0)
-    // Commit if: dragged past threshold OR fast fling downward
-    const FLING_VELOCITY_THRESHOLD = 0.8; // progress/s
-    const POSITION_THRESHOLD = 0.3;       // 30% of the way
-
-    const shouldMinimize = currentProgress >= POSITION_THRESHOLD
-      || releaseVelocity > FLING_VELOCITY_THRESHOLD;
-
-    // Initialize spring from current state
-    springRef.current = {
-      active: false,
-      position: currentProgress,
-      velocity: releaseVelocity,
+      // ONLY update the ref — zero DOM work, zero allocations.
+      const { fullDist } = layoutRef.current;
+      swipeOffsetRef.current = deltaY > 0 && fullDist > 0 ? deltaY / fullDist : 0;
     };
 
-    swipeOffsetRef.current = 0;
-    swipeStartY.current = null;
-    velocityTrackerRef.current = [];
+    const onTouchEnd = () => {
+      if (swipeStartY.current === null) return;
+      cancelAnimationFrame(rafIdRef.current);
 
-    // Launch spring animation toward target
-    animateSpring(shouldMinimize ? 1 : 0);
-  }, [computeReleaseVelocity, animateSpring]);
+      const currentProgress = swipeOffsetRef.current;
+      const releaseVelocity = computeReleaseVelocity();
+
+      const FLING_VELOCITY_THRESHOLD = 0.8;
+      const POSITION_THRESHOLD = 0.3;
+
+      const shouldMinimize = currentProgress >= POSITION_THRESHOLD
+        || releaseVelocity > FLING_VELOCITY_THRESHOLD;
+
+      // Initialize spring from current state with release velocity
+      springRef.current = {
+        active: false,
+        position: currentProgress,
+        velocity: releaseVelocity,
+      };
+
+      swipeOffsetRef.current = 0;
+      swipeStartY.current = null;
+      velocityTrackerRef.current = [];
+
+      // If barely moved and releasing back, skip spring (instant snap)
+      if (!shouldMinimize && currentProgress < 0.01) {
+        cleanupGestureStyles(false);
+        return;
+      }
+
+      animateSpring(shouldMinimize ? 1 : 0);
+    };
+
+    // passive: true → tells browser we won't preventDefault, enabling
+    // maximum compositor-thread optimization for touch events
+    container.addEventListener("touchstart", onTouchStart, { passive: true });
+    container.addEventListener("touchmove", onTouchMove, { passive: true });
+    container.addEventListener("touchend", onTouchEnd, { passive: true });
+    container.addEventListener("touchcancel", onTouchEnd, { passive: true });
+
+    return () => {
+      container.removeEventListener("touchstart", onTouchStart);
+      container.removeEventListener("touchmove", onTouchMove);
+      container.removeEventListener("touchend", onTouchEnd);
+      container.removeEventListener("touchcancel", onTouchEnd);
+      cancelAnimationFrame(rafIdRef.current);
+    };
+  }, [applyProgress, cleanupGestureStyles, animateSpring, computeReleaseVelocity]);
 
   const playerContainerStyle = useMemo((): React.CSSProperties => ({
     viewTransitionName: isOverlayVisible ? "hero-thumbnail" : undefined,
     contain: "layout paint",
+    touchAction: "none", // Prevent browser scroll/gesture interference during swipe
   }), [isOverlayVisible]);
 
   const playback = useMemo(
@@ -836,9 +841,6 @@ function VideoPlayer({ info, contentFadeRef }: VideoPlayerProps) {
       ref={containerRef}
       className="video-player-container relative aspect-video w-full bg-black"
       style={playerContainerStyle}
-      onTouchStart={handleSwipeStart}
-      onTouchMove={handleSwipeMove}
-      onTouchEnd={handleSwipeEnd}
     >
       {playback.mode !== "none" ? (
         <>
