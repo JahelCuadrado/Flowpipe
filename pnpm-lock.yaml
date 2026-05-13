@@ -20,6 +20,9 @@ importers:
       '@capacitor/app':
         specifier: ^7.0.0
         version: 7.1.2(@capacitor/core@7.6.4)
+      '@capacitor/screen-orientation':
+        specifier: ^7.0.4
+        version: 7.0.4(@capacitor/core@7.6.4)
       '@capacitor/status-bar':
         specifier: ^7.0.0
         version: 7.0.6(@capacitor/core@7.6.4)
@@ -697,6 +700,11 @@ packages:
 
   '@capacitor/core@7.6.4':
     resolution: {integrity: sha512-wRq5d8+EGaIztp5sEvmOyA5kmqFwwE+Ceocw2XTQSePFD11msdLXNERGfyQhMCyxnrPfrwhWqO3SjfC73Nxq6g==}
+
+  '@capacitor/screen-orientation@7.0.4':
+    resolution: {integrity: sha512-xWeWnZsV6z1bXxlOnSi3ynrFMK/JICryAuLnIvGL069BHS05nvxwu15d0xMZiMZWkoucNEAN60vyIYGGqz5IWA==}
+    peerDependencies:
+      '@capacitor/core': '>=7.0.0'
 
   '@capacitor/status-bar@7.0.6':
     resolution: {integrity: sha512-7AVqj46b26QikImQzWfsJmzG8NUJZBGkrVSuoeTo+SX/YH3hXH0MqwwFgMqMGHfa/BICDgSvTjM9miVFlq0+RQ==}
@@ -4031,6 +4039,10 @@ snapshots:
   '@capacitor/core@7.6.4':
     dependencies:
       tslib: 2.8.1
+
+  '@capacitor/screen-orientation@7.0.4(@capacitor/core@7.6.4)':
+    dependencies:
+      '@capacitor/core': 7.6.4
 
   '@capacitor/status-bar@7.0.6(@capacitor/core@7.6.4)':
     dependencies:
