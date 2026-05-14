@@ -7,6 +7,8 @@ import type {
   StreamHistoryEntity,
   StreamStateEntity,
   SearchHistoryEntry,
+  ImageCacheEntity,
+  ExtractorCacheEntity,
 } from "@/domain/entities/LocalEntities";
 
 /**
@@ -26,6 +28,8 @@ class AppDatabase extends Dexie {
   streamHistory!: EntityTable<StreamHistoryEntity, "id">;
   streamStates!: EntityTable<StreamStateEntity, "streamId">;
   searchHistory!: EntityTable<SearchHistoryEntry, "id">;
+  imageCache!: EntityTable<ImageCacheEntity, "url">;
+  extractorCache!: EntityTable<ExtractorCacheEntity, "key">;
 
   constructor() {
     super("NewPipeDB");
@@ -38,6 +42,29 @@ class AppDatabase extends Dexie {
       streamHistory: "++id, streamId, accessDate",
       streamStates: "streamId",
       searchHistory: "++id, serviceId, search, creationDate",
+    });
+
+    this.version(2).stores({
+      streams: "++id, &[serviceId+url], title, uploader, uploadDate",
+      subscriptions: "++id, &[serviceId+url], name",
+      playlists: "++id, name, displayIndex",
+      playlistStreams: "++id, playlistId, streamId, [playlistId+joinIndex]",
+      streamHistory: "++id, streamId, accessDate",
+      streamStates: "streamId",
+      searchHistory: "++id, serviceId, search, creationDate",
+      imageCache: "&url, cachedAt",
+    });
+
+    this.version(3).stores({
+      streams: "++id, &[serviceId+url], title, uploader, uploadDate",
+      subscriptions: "++id, &[serviceId+url], name",
+      playlists: "++id, name, displayIndex",
+      playlistStreams: "++id, playlistId, streamId, [playlistId+joinIndex]",
+      streamHistory: "++id, streamId, accessDate",
+      streamStates: "streamId",
+      searchHistory: "++id, serviceId, search, creationDate",
+      imageCache: "&url, cachedAt",
+      extractorCache: "&key, expiresAt",
     });
   }
 }

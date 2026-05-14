@@ -1,10 +1,11 @@
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { database } from "@/infrastructure/database/AppDatabase";
 import { fetchChannelTabInfo } from "@/infrastructure/api/ApiService";
 import { VideoCardGrid } from "@/presentation/components/ui/VideoCard";
 import { LoadingScreen } from "@/presentation/components/ui/LoadingScreen";
 import { ErrorMessage } from "@/presentation/components/ui/ErrorMessage";
 import { PullToRefresh } from "@/presentation/components/ui/PullToRefresh";
+import { RequestThrottler } from "@/infrastructure/resilience/RequestThrottler";
 import type { StreamInfoItem } from "@newpipe/shared";
 import type { SubscriptionEntity } from "@/domain/entities/LocalEntities";
 
@@ -24,22 +25,26 @@ export default function FeedPage() {
   const pageRef = useRef(0);
   const subsRef = useRef<SubscriptionEntity[]>([]);
 
+  /** Shared throttler limits concurrent YouTube requests to avoid rate-limiting. */
+  const throttler = useMemo(() => new RequestThrottler({ maxConcurrent: 3, delayMs: 300 }), []);
+
   const fetchBatch = useCallback(async (page: number): Promise<StreamInfoItem[]> => {
     const start = page * SUBS_PER_PAGE;
     const batch = subsRef.current.slice(start, start + SUBS_PER_PAGE);
     if (batch.length === 0) return [];
 
     const batchItems: StreamInfoItem[] = [];
-    const results = await Promise.allSettled(
-      batch.map((sub) => fetchChannelTabInfo(sub.serviceId, sub.url, "Videos"))
+    const tasks = batch.map(
+      (sub) => () => fetchChannelTabInfo(sub.serviceId, sub.url, "Videos")
     );
+    const results = await throttler.executeAll(tasks);
     for (const result of results) {
       if (result.status === "fulfilled" && result.value) {
         batchItems.push(...result.value.items.slice(0, VIDEOS_PER_CHANNEL));
       }
     }
     return batchItems;
-  }, []);
+  }, [throttler]);
 
   const deduplicateAndSort = useCallback((allItems: StreamInfoItem[]): StreamInfoItem[] => {
     const seen = new Set<string>();

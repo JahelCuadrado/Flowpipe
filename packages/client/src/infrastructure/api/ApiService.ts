@@ -1,4 +1,5 @@
 import { NewPipeExtractor } from "@newpipe/extractor";
+import type { YoutubeService } from "@newpipe/extractor";
 import { ServiceId } from "@newpipe/shared";
 import type {
   SearchResult,
@@ -14,6 +15,10 @@ import type {
 } from "@newpipe/shared";
 import { initExtractor } from "@/infrastructure/extractor/extractorInit";
 import { useSettingsStore } from "@/application/stores/settingsStore";
+import { executeWithResilience } from "@/infrastructure/resilience/ResilienceService";
+import { ExtractorCache } from "@/infrastructure/resilience/ExtractorCache";
+import type { ResilienceLevel } from "@/infrastructure/resilience/types";
+import { fetchStreamInfoFromPiped } from "@/infrastructure/resilience/PipedApiService";
 
 /**
  * Maps country codes to their primary language code for YouTube's `hl` parameter.
@@ -91,13 +96,56 @@ export async function fetchSuggestions(
 
 // ─── Stream ──────────────────────────────────────────────────────────────────
 
+/**
+ * Fetches full stream info with a 4-level resilience cascade:
+ *   1. Cache hit (instant, no network)
+ *   2. Direct extraction via iOS client (default)
+ *   3. Direct extraction via ANDROID client (rotation)
+ *   4. Piped API fallback (external proxy)
+ *
+ * Successful results are cached for subsequent requests.
+ */
 export async function fetchStreamInfo(
   serviceId: number,
   url: string
 ): Promise<StreamInfo> {
+  // Start periodic cache cleanup on first use
+  ExtractorCache.startPeriodicCleanup();
+
+  const cacheKey = ExtractorCache.buildKey("streamInfo", serviceId, url);
+
+  // Level 0: Cache hit — return immediately without network
+  const cached = await ExtractorCache.get<StreamInfo>(cacheKey);
+  if (cached) {
+    return cached;
+  }
+
   const service = getService(serviceId);
   const { country, language } = getLocalization();
-  return service.getStreamInfo(url, language, country);
+
+  // Build resilience cascade levels
+  const levels: ResilienceLevel<StreamInfo>[] = [
+    {
+      name: "Direct (iOS)",
+      execute: () => service.getStreamInfo(url, language, country),
+    },
+    {
+      name: "Direct (Android)",
+      execute: () =>
+        (service as YoutubeService).getStreamInfoWithClient(url, "ANDROID", language, country),
+    },
+    {
+      name: "Piped API",
+      execute: () => fetchStreamInfoFromPiped(url),
+    },
+  ];
+
+  const result = await executeWithResilience(levels);
+
+  // Cache successful result for future requests
+  ExtractorCache.set(cacheKey, result.data, "streamInfo").catch(() => {});
+
+  return result.data;
 }
 
 // ─── Channel ─────────────────────────────────────────────────────────────────

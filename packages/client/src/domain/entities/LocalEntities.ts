@@ -84,3 +84,24 @@ export interface SearchHistoryEntry {
   readonly creationDate: string;
   readonly search: string;
 }
+
+/**
+  * Cached image blob stored in IndexedDB.
+  * Used to persist avatars and thumbnails for offline access.
+  */
+export interface ImageCacheEntity {
+  readonly url: string;
+  readonly blob: Blob;
+  readonly cachedAt: string;
+}
+
+/**
+ * Cached extractor response stored in IndexedDB.
+ * Used to avoid repeated requests to YouTube for the same content.
+ */
+export interface ExtractorCacheEntity {
+  readonly key: string;
+  readonly data: string;
+  readonly expiresAt: number;
+  readonly cachedAt: number;
+}
