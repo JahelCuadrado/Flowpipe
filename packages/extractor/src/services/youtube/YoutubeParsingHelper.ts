@@ -1,17 +1,25 @@
 import type { Downloader } from "../../core/types.js";
-import { ParsingError } from "../../core/errors.js";
+import { ParsingError, ReCaptchaError } from "../../core/errors.js";
 import {
   WEB_CLIENT_ID,
   WEB_CLIENT_NAME,
   WEB_HARDCODED_CLIENT_VERSION,
   DESKTOP_CLIENT_PLATFORM,
+  ANDROID_CLIENT_ID,
+  ANDROID_CLIENT_NAME,
   ANDROID_CLIENT_VERSION,
   IOS_CLIENT_VERSION,
   IOS_DEVICE_MODEL,
   IOS_USER_AGENT_VERSION,
+  MOBILE_CLIENT_PLATFORM,
 } from "./constants.js";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
+
+/**
+ * Supported InnerTube client types for client rotation.
+ */
+export type InnerTubeClientType = "IOS" | "ANDROID";
 
 export interface InnertubeContext {
   readonly client: {
@@ -186,6 +194,60 @@ export async function buildDesktopContext(
   };
 }
 
+/**
+ * Builds the InnerTube context for ANDROID client requests.
+ * Used as a fallback when iOS client is blocked by YouTube.
+ */
+export function buildAndroidContext(
+  localization = "en",
+  country = "US"
+): InnertubeContext {
+  return {
+    client: {
+      clientName: ANDROID_CLIENT_NAME,
+      clientVersion: ANDROID_CLIENT_VERSION,
+      hl: localization,
+      gl: country,
+      platform: MOBILE_CLIENT_PLATFORM,
+      osName: "Android",
+      osVersion: "15",
+      androidSdkVersion: 35,
+      deviceMake: "Google",
+      deviceModel: "Pixel 9",
+      utcOffsetMinutes: 0,
+    },
+    request: {
+      useSsl: true,
+      internalExperimentFlags: [],
+    },
+    user: {
+      lockedSafetyMode: false,
+    },
+  };
+}
+
+/**
+ * Returns the player-specific headers for an ANDROID client request.
+ */
+export function getAndroidPlayerHeaders(country = "US"): Record<string, string> {
+  return {
+    "User-Agent": getAndroidUserAgent(country),
+    "X-YouTube-Client-Name": ANDROID_CLIENT_ID,
+    "X-YouTube-Client-Version": ANDROID_CLIENT_VERSION,
+  };
+}
+
+/**
+ * Returns the player-specific headers for an iOS client request.
+ */
+export function getIosPlayerHeaders(country = "US"): Record<string, string> {
+  return {
+    "User-Agent": getIosUserAgent(country),
+    "X-YouTube-Client-Name": "5",
+    "X-YouTube-Client-Version": IOS_CLIENT_VERSION,
+  };
+}
+
 // ─── Headers ─────────────────────────────────────────────────────────────────
 
 export function getYouTubeHeaders(clientVersion: string): Record<string, string> {
@@ -228,8 +290,35 @@ export async function postToInnerTube(
   const url = `${YOUTUBEI_V1_URL}${endpoint}?${DISABLE_PRETTY_PRINT}`;
   const response = await downloader.post(url, headers, JSON.stringify(body));
 
+  // Detect rate-limiting / CAPTCHA before any other error handling
+  if (response.responseCode === 429) {
+    throw new ReCaptchaError(
+      `Rate limited (429) for endpoint: ${endpoint}`,
+      "https://www.google.com/recaptcha"
+    );
+  }
+
+  const responseBodyLower = response.responseBody.toLowerCase();
+  if (
+    responseBodyLower.includes("recaptcha") ||
+    responseBodyLower.includes("captcha") ||
+    responseBodyLower.includes("google.com/sorry")
+  ) {
+    throw new ReCaptchaError(
+      `CAPTCHA challenge detected for endpoint: ${endpoint}`,
+      "https://www.google.com/recaptcha"
+    );
+  }
+
   if (response.responseCode === 404) {
     throw new ParsingError(`Content not found (404) for endpoint: ${endpoint}`);
+  }
+
+  if (response.responseCode === 403) {
+    throw new ReCaptchaError(
+      `Access forbidden (403) for endpoint: ${endpoint}`,
+      "https://www.google.com/recaptcha"
+    );
   }
 
   if (response.responseCode >= 400) {
@@ -242,11 +331,27 @@ export async function postToInnerTube(
     throw new ParsingError("InnerTube response is too short");
   }
 
+  let parsed: Record<string, unknown>;
   try {
-    return JSON.parse(response.responseBody) as Record<string, unknown>;
+    parsed = JSON.parse(response.responseBody) as Record<string, unknown>;
   } catch {
     throw new ParsingError("Failed to parse InnerTube JSON response");
   }
+
+  // Detect rate-limiting in parsed response (playabilityStatus or error objects)
+  const errorObj = parsed["error"] as Record<string, unknown> | undefined;
+  if (errorObj) {
+    const errorCode = errorObj["code"] as number | undefined;
+    const errorStatus = errorObj["status"] as string | undefined;
+    if (errorCode === 429 || errorStatus === "RESOURCE_EXHAUSTED") {
+      throw new ReCaptchaError(
+        `Rate limited via error response for endpoint: ${endpoint}`,
+        "https://www.google.com/recaptcha"
+      );
+    }
+  }
+
+  return parsed;
 }
 
 // ─── Text / JSON helpers ─────────────────────────────────────────────────────

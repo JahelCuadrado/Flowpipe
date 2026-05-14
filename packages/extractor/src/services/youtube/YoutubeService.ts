@@ -7,6 +7,7 @@ import type {
 } from "@newpipe/shared";
 import type { StreamingService } from "../../core/StreamingService.js";
 import type { Downloader, InfoItemsPage } from "../../core/types.js";
+import type { InnerTubeClientType } from "./YoutubeParsingHelper.js";
 import { youtubeSearch, youtubeSearchNextPage } from "./extractors/YoutubeSearchExtractor.js";
 import { youtubeGetStreamInfo } from "./extractors/YoutubeStreamExtractor.js";
 import { youtubeGetSearchSuggestions } from "./extractors/YoutubeSuggestionExtractor.js";
@@ -84,6 +85,19 @@ export class YoutubeService implements StreamingService {
 
   async getStreamInfo(url: string, localization?: string, country?: string): Promise<StreamInfo> {
     return youtubeGetStreamInfo(this.downloader, url, localization, country);
+  }
+
+  /**
+   * Fetches stream info using a specific InnerTube client type.
+   * Used by the resilience cascade to try alternative clients on block.
+   */
+  async getStreamInfoWithClient(
+    url: string,
+    clientType: InnerTubeClientType,
+    localization?: string,
+    country?: string
+  ): Promise<StreamInfo> {
+    return youtubeGetStreamInfo(this.downloader, url, localization, country, clientType);
   }
 
   async getChannelInfo(url: string, localization?: string, country?: string): Promise<ChannelInfo> {

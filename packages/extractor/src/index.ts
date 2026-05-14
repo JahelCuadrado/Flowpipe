@@ -1,6 +1,7 @@
 export { NewPipeExtractor } from "./core/NewPipeExtractor.js";
 export type { StreamingService } from "./core/StreamingService.js";
 export type { Downloader, DownloaderConfig, DownloaderResponse, InfoItemsPage } from "./core/types.js";
+export type { InnerTubeClientType } from "./services/youtube/YoutubeParsingHelper.js";
 export {
   ExtractionError,
   ContentNotAvailableError,

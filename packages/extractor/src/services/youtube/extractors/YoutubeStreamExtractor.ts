@@ -21,6 +21,7 @@ import {
 } from "../../../core/errors.js";
 import {
   buildDesktopContext,
+  buildAndroidContext,
   postToInnerTube,
   getTextFromObject,
   getThumbnailsFromInfoItem,
@@ -28,8 +29,10 @@ import {
   isVerified,
   parseDurationString,
   generateContentPlaybackNonce,
-  getIosUserAgent,
+  getIosPlayerHeaders,
+  getAndroidPlayerHeaders,
 } from "../YoutubeParsingHelper.js";
+import type { InnerTubeClientType } from "../YoutubeParsingHelper.js";
 import {
   IOS_CLIENT_NAME,
   IOS_CLIENT_VERSION,
@@ -504,20 +507,30 @@ function parseViewCountStr(text: string): number | null {
 // ─── Main stream extraction ─────────────────────────────────────────────────
 
 /**
- * Extracts full stream info from a YouTube video URL via InnerTube API.
- * Uses iOS client for player data (avoids PoToken requirement) and
- * WEB client for watch-next metadata (related videos, descriptions).
+ * Builds the InnerTube player context and headers for the given client type.
  */
-export async function youtubeGetStreamInfo(
-  downloader: Downloader,
-  url: string,
-  localization = "en",
-  country = "US"
-): Promise<StreamInfo> {
-  const videoId = extractVideoId(url);
-  const cpn = generateContentPlaybackNonce();
+function buildPlayerRequest(
+  clientType: InnerTubeClientType,
+  videoId: string,
+  cpn: string,
+  localization: string,
+  country: string
+): { body: Record<string, unknown>; headers: Record<string, string> } {
+  if (clientType === "ANDROID") {
+    const context = buildAndroidContext(localization, country);
+    return {
+      body: {
+        context,
+        videoId,
+        cpn,
+        contentCheckOk: true,
+        racyCheckOk: true,
+      },
+      headers: getAndroidPlayerHeaders(country),
+    };
+  }
 
-  // ── iOS client context for player request (bypasses PoToken) ──
+  // Default: iOS client (bypasses PoToken requirement)
   const iosContext = {
     client: {
       clientName: IOS_CLIENT_NAME,
@@ -537,25 +550,49 @@ export async function youtubeGetStreamInfo(
     },
   };
 
-  const playerBody: Record<string, unknown> = {
-    context: iosContext,
+  return {
+    body: {
+      context: iosContext,
+      videoId,
+      cpn,
+      contentCheckOk: true,
+      racyCheckOk: true,
+    },
+    headers: getIosPlayerHeaders(country),
+  };
+}
+
+/**
+ * Extracts full stream info from a YouTube video URL via InnerTube API.
+ * Uses the specified client for player data and WEB client for metadata.
+ *
+ * @param clientType - InnerTube client to use for the /player endpoint.
+ *                     Defaults to "IOS" (avoids PoToken requirement).
+ */
+export async function youtubeGetStreamInfo(
+  downloader: Downloader,
+  url: string,
+  localization = "en",
+  country = "US",
+  clientType: InnerTubeClientType = "IOS"
+): Promise<StreamInfo> {
+  const videoId = extractVideoId(url);
+  const cpn = generateContentPlaybackNonce();
+
+  // ── Player request with specified client ──
+  const { body: playerBody, headers: playerHeaders } = buildPlayerRequest(
+    clientType,
     videoId,
     cpn,
-    contentCheckOk: true,
-    racyCheckOk: true,
-  };
-
-  const iosHeaders = {
-    "User-Agent": getIosUserAgent(country),
-    "X-YouTube-Client-Name": "5",
-    "X-YouTube-Client-Version": IOS_CLIENT_VERSION,
-  };
+    localization,
+    country
+  );
 
   const playerResponse = await postToInnerTube(
     downloader,
     "player",
     playerBody as never,
-    iosHeaders
+    playerHeaders
   );
 
   // Check playability
